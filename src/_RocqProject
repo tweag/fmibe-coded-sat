@@ -1,0 +1,11 @@
+-arg -w
+-arg -deprecated-native-compiler-option
+-arg -w
+-arg -native-compiler-disabled
+-arg -native-compiler
+-arg ondemand
+-arg -boot
+-R /nix/store/34i0qhxp21wqbmr9fa3j5w2j1qmfswi7-rocq-stdlib-9.1.0/lib/ocaml/5.4.1/site-lib/coq/theories Corelib
+-Q /nix/store/34i0qhxp21wqbmr9fa3j5w2j1qmfswi7-rocq-stdlib-9.1.0/lib/ocaml/5.4.1/site-lib/coq/user-contrib/Stdlib Stdlib
+-R . FMV
+-R ../_build/default/src FMV

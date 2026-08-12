@@ -61,6 +61,14 @@
           ];
 
           shellHook = ''
+            # Both rocq-core and rocq-stdlib set ROCQLIB. Since mkShell's
+            # setup-hook order leaves it pointing at rocq-core, explicitly
+            # select the full standard-library installation for Dune's Rocq
+            # theory discovery.
+            # Quite hackish. Figure if there's a blessed way to do that, maybe
+            # with an Opam file?
+            export ROCQLIB="${opamScope.rocq-stdlib}/lib/ocaml/${opamScope.ocaml-base-compiler.version}/site-lib/coq"
+
             echo "Rocq development shell: $(rocq --version | head -n1)"
             echo "Build with: dune build"
           '';

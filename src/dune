@@ -1,0 +1,6 @@
+(include_subdirs qualified)
+
+(rocq.theory
+ (name FMV)
+ (theories Stdlib)
+ (generate_project_file))
