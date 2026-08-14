@@ -433,7 +433,7 @@ Proof.
     + now apply Hwatch with (c := d).
   - split.
     + intros v. cbn [state_clauses]. rewrite ClauseMap.find_add_eq.
-      destruct (Nat.eq_dec (literal_var l) v) as [Heq|Hneq].
+      destruct (VarKey.eq_dec (literal_var l) v) as [Heq|Hneq].
       * subst v. constructor; [exact Hfresh|apply Hnodup].
       * apply Hnodup.
     + intros d. unfold card_of_watch in Hcard |- *.
@@ -613,14 +613,33 @@ Proof.
         eapply InL_cons_other; [exact Hneq|exact Hinmodel].
       * split.
         -- intros v. cbn [state_clauses]. rewrite ClauseMap.find_remove_eq.
-           destruct (Nat.eq_dec (literal_var l) v);
+           destruct (VarKey.eq_dec (literal_var l) v);
              [constructor|apply Hnodup].
         -- intros c. unfold card_of_watch in Hcard |- *.
            cbn [state_clauses state_pending] in Hcard |- *.
            rewrite count_occ_app.
            pose proof (ClauseMap.card_of_remove cm c (literal_var l))
              as Hremove.
-           destruct (Hcard c) as [Hzero|Htwo]; [left|right]; lia.
+           change (ClauseMap.card_of c (ClauseMap.remove (literal_var l) cm) +
+             count_occ clause_eq_dec (ClauseMap.find (literal_var l) cm) c =
+             ClauseMap.card_of c cm) in Hremove.
+           destruct (Hcard c) as [Hzero|Htwo].
+           { left.
+             etransitivity.
+             - exact (Nat.add_assoc
+                 (ClauseMap.card_of c (ClauseMap.remove (literal_var l) cm))
+                 (count_occ clause_eq_dec
+                   (ClauseMap.find (literal_var l) cm) c)
+                 (count_occ clause_eq_dec pending c)).
+             - rewrite Hremove. exact Hzero. }
+           { right.
+             etransitivity.
+             - exact (Nat.add_assoc
+                 (ClauseMap.card_of c (ClauseMap.remove (literal_var l) cm))
+                 (count_occ clause_eq_dec
+                   (ClauseMap.find (literal_var l) cm) c)
+                 (count_occ clause_eq_dec pending c)).
+             - rewrite Hremove. exact Htwo. }
 Qed.
 
 Lemma propagate_inv : forall c s,
