@@ -32,6 +32,29 @@ Proof.
   reflexivity.
 Qed.
 
+Lemma progress_falsified_empty : forall s s',
+  progress s = Progress s' -> s'.(state_falsified) = [].
+Proof.
+  intros s s' Hprogress. unfold progress in Hprogress.
+  destruct (progress_state s) as [m cm sat fals pending].
+  destruct fals as [|c fals]; [now injection Hprogress as <-|discriminate].
+Qed.
+
+Lemma progress_conflict_spec : forall s explanation,
+  progress s = Conflict explanation ->
+  exists s' c, progress_state s = s' /\
+    In c s'.(state_falsified) /\ explanation = neg c.
+Proof.
+  intros s explanation Hprogress. unfold progress in Hprogress.
+  destruct (progress_state s) as [m cm sat fals pending] eqn:Hstate.
+  destruct fals as [|c fals]; [discriminate|].
+  injection Hprogress as <-.
+  exists {| state_model := m; state_clauses := cm;
+    state_satisfied := sat; state_falsified := c :: fals;
+    state_pending := pending |}, c.
+  split; [reflexivity|]. split; [now left|reflexivity].
+Qed.
+
 Definition satisfies_problem (m : SModel) (p : Problem) : bool :=
   forallb (satisfies_clause m) p.
 

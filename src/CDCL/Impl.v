@@ -13,9 +13,20 @@ Variant Literal :=
   | Pos (l : Var)
   | Neg (l : Var)
 .
+Definition neg_lit (l : Literal) : Literal :=
+  match l with
+  | Pos v => Neg v
+  | Neg v => Pos v
+  end.
+
 Definition Clause := list Literal.
 
 Definition Problem := list Clause.
+
+(* A conjunction of literal. Used to represent conflicts and such *)
+Definition Conj := list Literal.
+
+Definition neg (c : Clause) : Conj := map neg_lit c.
 
 (* A partial model. The semantics is that `Pos` literals in the list are known
    to be true, `Neg` literals are known to be false. The rest is (yet)
@@ -168,12 +179,13 @@ Definition set_lit (l : Literal) (s : State) : State :=
   fold_left (fun s c => propagate c s) watched s'.
 
 (* Game plan: to progress the state:
-   - If there are pending clauses, find a new undecided literal to watch or propagate their only literal or mark the clause as satisfied or falsified.
+   - If there is a pending propagation, assign its literal using its clause as
+     the explanation.
    - Otherwise
      1. choose an undecided variable
      2. Set it to `true` in the model
-     3. Wake up any clause currently watching this literal, make them all pending. *)
-Definition progress (s : State) : State :=
+     3. Wake up and process every clause currently watching this literal. *)
+Definition progress_state (s : State) : State :=
   match s.(state_pending) with
   | (l, c) :: pending =>
       set_lit l
@@ -188,6 +200,17 @@ Definition progress (s : State) : State :=
       | Some v =>
           set_lit (Pos v) s
       end
+  end.
+
+Variant progress_result :=
+  | Progress (s : State)
+  | Conflict (explanation : Conj).
+
+Definition progress (s : State) : progress_result :=
+  let s' := progress_state s in
+  match s'.(state_falsified) with
+  | [] => Progress s'
+  | c :: _ => Conflict (neg c)
   end.
 
 Definition is_empty {A} (l : list A) : bool :=
@@ -215,12 +238,12 @@ Arguments Now {A}.
 Arguments Later {A}.
 
 CoFixpoint rush (s : State) : Delay (option Model) :=
-  if is_empty (s.(state_falsified)) then
-    Now None
-      (* TODO: add an is_empty predicate to ClauseMap directly *)
+  (* TODO: add an is_empty predicate to ClauseMap directly *)
+  if is_empty (ClauseMap.keys s.(state_clauses)) then
+    Now (Some s.(state_model))
   else
-    if is_empty (ClauseMap.keys s.(state_clauses)) then
-      Now (Some s.(state_model))
-    else
-      Later (rush (progress s)).
+    match progress s with
+    | Progress s' => Later (rush s')
+    | Conflict _ => Now None
+    end.
     
