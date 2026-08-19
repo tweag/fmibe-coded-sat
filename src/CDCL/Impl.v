@@ -21,6 +21,7 @@ Definition Problem := list Clause.
    to be true, `Neg` literals are known to be false. The rest is (yet)
    undecided. *)
 Definition Model := list Literal.
+Definition Pending := list (Literal * Clause).
 
 Definition literal_eq_dec (l r : Literal) : {l = r} + {l <> r}.
 Proof.
@@ -71,7 +72,7 @@ Record State := {
   state_clauses : ClauseMap.t;
   state_satisfied : list Clause;
   state_falsified : list Clause;
-  state_pending : list Clause;
+  state_pending : Pending;
 }.
 
 Definition literal_var (l : Literal) : Var :=
@@ -137,44 +138,34 @@ Definition scan_clause (m : Model) (c : Clause)
         end
     end.
 
-Definition set_lit (l : Literal) (m : State) : State :=
-  let watched := ClauseMap.find (literal_var l) m.(state_clauses) in
-  let cm := ClauseMap.remove (literal_var l) m.(state_clauses) in
-  let pending := watched ++ m.(state_pending) in
-  {| state_model := l :: m.(state_model); 
-     state_clauses := cm;
-     state_satisfied := m.(state_satisfied);
-     state_falsified := m.(state_falsified);
-     state_pending := pending |}.
-
-Definition remove_clause_from_list (c : Clause) (cs : list Clause) : list Clause :=
-  filter (fun d => if clause_eq_dec c d then false else true) cs.
-
-(* The fuel is initially larger than the number of literals in the problem.
-   Every recursive call assigns a previously undecided literal. *)
 Definition propagate (c : Clause) (s : State) : State :=
-      match scan_clause s.(state_model) c s.(state_clauses) s.(state_satisfied) s.(state_falsified) with
-      | propagate_literal l =>
-          set_lit l
-            {| state_model := s.(state_model);
-               state_clauses := ClauseMap.remove_clause c s.(state_clauses);
-               state_satisfied := c :: s.(state_satisfied);
-               state_falsified := s.(state_falsified);
-               state_pending :=
-                 remove_clause_from_list c s.(state_pending) |}
-      | clause_decided cm sat fals =>
-          {| state_model := s.(state_model);
-             state_clauses := cm;
-             state_satisfied := sat;
-             state_falsified := fals;
-             state_pending := remove_clause_from_list c s.(state_pending) |}
-      | clause_watched cm =>
-          {| state_model := s.(state_model);
-             state_clauses := cm;
-             state_satisfied := s.(state_satisfied);
-             state_falsified := s.(state_falsified);
-             state_pending := s.(state_pending) |}
+  match scan_clause s.(state_model) c s.(state_clauses)
+      s.(state_satisfied) s.(state_falsified) with
+  | propagate_literal l =>
+      {| state_model := s.(state_model);
+         state_clauses := s.(state_clauses);
+         state_satisfied := s.(state_satisfied);
+         state_falsified := s.(state_falsified);
+         state_pending := (l, c) :: s.(state_pending) |}
+  | clause_decided cm sat fals =>
+      {| state_model := s.(state_model); state_clauses := cm;
+         state_satisfied := sat; state_falsified := fals;
+         state_pending := s.(state_pending) |}
+  | clause_watched cm =>
+      {| state_model := s.(state_model); state_clauses := cm;
+         state_satisfied := s.(state_satisfied);
+         state_falsified := s.(state_falsified);
+         state_pending := s.(state_pending) |}
   end.
+
+Definition set_lit (l : Literal) (s : State) : State :=
+  let watched := ClauseMap.find (literal_var l) s.(state_clauses) in
+  let cm := ClauseMap.remove (literal_var l) s.(state_clauses) in
+  let s' := {| state_model := l :: s.(state_model);
+      state_clauses := cm; state_satisfied := s.(state_satisfied);
+      state_falsified := s.(state_falsified);
+      state_pending := s.(state_pending) |} in
+  fold_left (fun s c => propagate c s) watched s'.
 
 (* Game plan: to progress the state:
    - If there are pending clauses, find a new undecided literal to watch or propagate their only literal or mark the clause as satisfied or falsified.
@@ -184,11 +175,11 @@ Definition propagate (c : Clause) (s : State) : State :=
      3. Wake up any clause currently watching this literal, make them all pending. *)
 Definition progress (s : State) : State :=
   match s.(state_pending) with
-  | c :: pending =>
-      propagate c
+  | (l, c) :: pending =>
+      set_lit l
         {| state_model := s.(state_model);
-           state_clauses := s.(state_clauses);
-           state_satisfied := s.(state_satisfied);
+           state_clauses := ClauseMap.remove_clause c s.(state_clauses);
+           state_satisfied := c :: s.(state_satisfied);
            state_falsified := s.(state_falsified);
            state_pending := pending |}
   | [] =>
