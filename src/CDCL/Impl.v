@@ -188,12 +188,19 @@ Definition set_lit (l : Literal) (s : State) : State :=
 Definition progress_state (s : State) : State :=
   match s.(state_pending) with
   | (l, c) :: pending =>
-      set_lit l
+      if in_dec literal_eq_dec l s.(state_model) then
         {| state_model := s.(state_model);
-           state_clauses := ClauseMap.remove_clause c s.(state_clauses);
-           state_satisfied := c :: s.(state_satisfied);
+           state_clauses := s.(state_clauses);
+           state_satisfied := s.(state_satisfied);
            state_falsified := s.(state_falsified);
            state_pending := pending |}
+      else
+        set_lit l
+          {| state_model := s.(state_model);
+             state_clauses := ClauseMap.remove_clause c s.(state_clauses);
+             state_satisfied := c :: s.(state_satisfied);
+             state_falsified := s.(state_falsified);
+             state_pending := pending |}
   | [] =>
       match hd_error (ClauseMap.keys s.(state_clauses)) with
       | None => s (* All the literal have been decided so no progress can be made *)

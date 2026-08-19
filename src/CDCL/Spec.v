@@ -91,11 +91,31 @@ Qed.
 Definition pending_clauses (pending : Pending) : list Clause :=
   map snd pending.
 
+Lemma in_pending_clauses : forall pending c,
+  In c (pending_clauses pending) <->
+  exists l, In (l, c) pending.
+Proof.
+  intros pending c. unfold pending_clauses. rewrite in_map_iff. split.
+  - intros [[l d] [Heq Hin]]. cbn in Heq. subst d. now exists l.
+  - intros [l Hin]. exists (l, c). split; [reflexivity|exact Hin].
+Qed.
+
+Lemma literal_undecided_not_in : forall m l,
+  literal_is_undecided m l = true -> ~ In l m.
+Proof.
+  induction m as [|x m IH]; intros l Hundecided Hin; [contradiction|].
+  simpl in Hin. destruct Hin as [->|Hin].
+  - unfold literal_is_undecided, literal_value in Hundecided. simpl in Hundecided.
+    rewrite Nat.eqb_refl in Hundecided. destruct l; discriminate.
+  - unfold literal_is_undecided, literal_value in Hundecided. simpl in Hundecided.
+    destruct (literal_var x =? literal_var l) eqn:Heq;
+      [destruct x, l; discriminate|].
+    apply (IH l); [exact Hundecided|exact Hin].
+Qed.
+
 (* A queued reason represents the second watch of its unit clause. *)
 Definition card_of_watch (work : list Clause) (c : Clause) (s : State) :=
-  ClauseMap.card_of c s.(state_clauses) +
-    count_occ clause_eq_dec
-      (work ++ pending_clauses s.(state_pending)) c.
+  ClauseMap.card_of c s.(state_clauses).
 
 Definition staged_invariant (work : list Clause) (s : State) : Prop :=
   (forall c, In c s.(state_satisfied) ->
@@ -106,10 +126,18 @@ Definition staged_invariant (work : list Clause) (s : State) : Prop :=
   /\ (forall v c, In c (ClauseMap.find v s.(state_clauses)) ->
      ~ InL v s.(state_model) /\ InL v c)
   /\ (forall v, NoDup (ClauseMap.find v s.(state_clauses)))
-  /\ NoDup (work ++ pending_clauses s.(state_pending))
+  /\ NoDup work
   /\ (forall l c, In (l, c) s.(state_pending) ->
-     In l c /\ literal_is_undecided s.(state_model) l = true)
-  /\ (forall c, card_of_watch work c s = 0 \/ card_of_watch work c s = 2).
+     In l c /\
+       (literal_is_undecided s.(state_model) l = true \/
+        In l s.(state_model)))
+  /\ (forall c,
+     card_of_watch work c s = 0 \/
+     card_of_watch work c s = 2 \/
+     (card_of_watch work c s = 1 /\
+       (In c work \/ exists l,
+         In (l, c) s.(state_pending) /\
+         literal_is_undecided s.(state_model) l = true))).
 
 Definition state_invariant (s : State) : Prop := staged_invariant [] s.
 
@@ -132,3 +160,6 @@ Proof.
               cbn [state_clauses state_pending].
               rewrite ClauseMap.card_of_empty. now left.
 Qed.
+
+(* Lemma progress_state_inv : forall s s', *)
+(*     state_invariant s -> progress s = Progress s' -> state_invariant s'. *)
