@@ -292,6 +292,9 @@ Qed.
 Definition card_of_watch (work : list Clause) (c : Clause) (s : State) :=
   ClauseMap.card_of c s.(state_clauses).
 
+Definition clause_is_decided (c : Clause) (s : State) : Prop :=
+  In c s.(state_satisfied) \/ In c s.(state_falsified).
+
 Definition staged_invariant (work : list Clause) (s : State) : Prop :=
   (forall c, In c s.(state_satisfied) ->
      Is_true (existsb (literal_is_true s.(state_model)) c))
@@ -309,13 +312,13 @@ Definition staged_invariant (work : list Clause) (s : State) : Prop :=
   /\ (forall c, In c work ->
      card_of_watch work c s = 1 \/
      (card_of_watch work c s = 0 /\
-       exists l, In (l, c) s.(state_pending)))
+       ((exists l, In (l, c) s.(state_pending)) \/ clause_is_decided c s)))
   /\ (forall c,
      card_of_watch work c s = 0 \/
      card_of_watch work c s = 2 \/
      (card_of_watch work c s = 1 /\
-       (In c work \/ exists l,
-         In (l, c) s.(state_pending)))).
+       (In c work \/ (exists l, In (l, c) s.(state_pending)) \/
+         clause_is_decided c s))).
 
 Definition state_invariant (s : State) : Prop := staged_invariant [] s.
 
@@ -412,10 +415,10 @@ Qed.
 Lemma scan_clause_decided_spec : forall m c cm sat fals cm' sat' fals',
   scan_clause m c cm sat fals = clause_decided cm' sat' fals' ->
   (existsb (literal_is_true m) c = true /\
-    cm' = ClauseMap.remove_clause c cm /\ sat' = c :: sat /\ fals' = fals) \/
+    cm' = cm /\ sat' = c :: sat /\ fals' = fals) \/
   (existsb (literal_is_true m) c = false /\
     filter (literal_is_undecided m) c = [] /\
-    cm' = ClauseMap.remove_clause c cm /\ sat' = sat /\ fals' = c :: fals).
+    cm' = cm /\ sat' = sat /\ fals' = c :: fals).
 Proof.
   intros m c cm sat fals cm' sat' fals' Hscan. unfold scan_clause in Hscan.
   rewrite scan_clause_once_spec in Hscan.
@@ -470,10 +473,10 @@ Proof.
       * intros d. destruct (clause_eq_dec c d) as [->|Hcd].
         -- unfold card_of_watch. cbn -[ClauseMap.card_of].
            rewrite ClauseMap.card_of_add.
-           destruct Hcwork as [Hone|[Hzero [p Hpc]]].
+           destruct Hcwork as [Hone|[Hzero Hreason]].
            ++ rewrite Hone. now right; left.
            ++ rewrite Hzero. right; right. split; [reflexivity|].
-              right. now exists p.
+              right. exact Hreason.
         -- specialize (Hcard d).
            unfold card_of_watch in Hcard |- *.
            cbn -[ClauseMap.card_of] in Hcard |- *.
@@ -482,7 +485,7 @@ Proof.
            ++ now left.
            ++ now right; left.
            ++ right; right. split; [exact Hone|].
-              destruct Hreason as [Hdwork|Hpendingreason].
+              destruct Hreason as [Hdwork|Hotherreason].
               ** simpl in Hdwork. destruct Hdwork as [Heq|Hdwork];
                    [contradiction|now left].
               ** now right.
@@ -547,22 +550,25 @@ Proof.
     + exact (Hpending p d Hpd).
   - split.
     + intros d Hdwork. specialize (Hwork d (or_intror Hdwork)).
-      destruct Hwork as [Hone|[Hzero [p Hpd]]].
+      destruct Hwork as [Hone|[Hzero Hreason]].
       * now left.
-      * right. split; [exact Hzero|]. exists p. now right.
+      * right. split; [exact Hzero|]. destruct Hreason as [[p Hpd]|Hdecided].
+        -- left. exists p. now right.
+        -- now right.
     + intros d. specialize (Hcard d).
       destruct Hcard as [Hzero|[Htwo|[Hone Hreason]]].
       * now left.
       * now right; left.
       * right; right. split; [exact Hone|].
-        destruct Hreason as [Hdwork|[p Hpd]].
+        destruct Hreason as [Hdwork|[[p Hpd]|Hdecided]].
         -- simpl in Hdwork. destruct Hdwork as [->|Hdwork].
-           ++ right. exists l. now left.
+           ++ right. left. exists l. now left.
            ++ now left.
-        -- right. exists p. now right.
+        -- right. left. exists p. now right.
+        -- now right; right.
 Qed.
 
-Lemma remove_active_inv : forall work m cm sat fals pending c sat' fals',
+Lemma decide_active_inv : forall work m cm sat fals pending c sat' fals',
   staged_invariant (c :: work)
     {| state_model := m; state_clauses := cm;
        state_satisfied := sat; state_falsified := fals;
@@ -571,44 +577,40 @@ Lemma remove_active_inv : forall work m cm sat fals pending c sat' fals',
   (forall d, In d fals' ->
     Is_true (negb (existsb (literal_is_true m) d)) /\
     filter (literal_is_undecided m) d = []) ->
+  (In c sat' \/ In c fals') ->
+  (forall d, In d sat \/ In d fals -> In d sat' \/ In d fals') ->
   staged_invariant work
-    {| state_model := m; state_clauses := ClauseMap.remove_clause c cm;
+    {| state_model := m; state_clauses := cm;
        state_satisfied := sat'; state_falsified := fals';
        state_pending := pending |}.
 Proof.
-  intros work m cm sat fals pending c sat' fals' Hinv Hsat' Hfals'.
+  intros work m cm sat fals pending c sat' fals' Hinv Hsat' Hfals'
+    Hcdecided Hpreserve.
   destruct Hinv as
     [_ [_ [Hwatch [Hnodup [Hworknodup
       [Hpending [Hwork Hcard]]]]]]].
   inversion Hworknodup as [|? ? Hcnotin Hworknodup']; subst.
   split; [exact Hsat'|]. split; [exact Hfals'|]. split.
-  - intros v d Hin. apply ClauseMap.find_remove_clause in Hin as [Hin _].
-    exact (Hwatch v d Hin).
+  - exact Hwatch.
   - split.
-    + intros v. cbn [state_clauses]. rewrite ClauseMap.find_remove_clause_eq.
-      apply NoDup_filter. apply Hnodup.
+    + exact Hnodup.
     + split; [exact Hworknodup'|]. split; [exact Hpending|]. split.
-      * intros d Hdwork. assert (c <> d) as Hcd by (intros ->; contradiction).
-        specialize (Hwork d (or_intror Hdwork)).
-        unfold card_of_watch in Hwork |- *.
-        cbn -[ClauseMap.card_of] in Hwork |- *.
-        rewrite (ClauseMap.card_of_remove_clause_neq cm c d Hcd).
-        exact Hwork.
-      * intros d. destruct (clause_eq_dec c d) as [->|Hcd].
-        -- unfold card_of_watch. cbn -[ClauseMap.card_of].
-           rewrite ClauseMap.card_of_remove_clause_eq. now left.
-        -- specialize (Hcard d).
-           unfold card_of_watch in Hcard |- *.
-           cbn -[ClauseMap.card_of] in Hcard |- *.
-           rewrite (ClauseMap.card_of_remove_clause_neq cm c d Hcd).
-           destruct Hcard as [Hzero|[Htwo|[Hone Hreason]]].
-           ++ now left.
+      * intros d Hdwork. specialize (Hwork d (or_intror Hdwork)).
+        destruct Hwork as [Hone|[Hzero [Hpendingreason|Hdecided]]].
+        -- now left.
+        -- right. split; [exact Hzero|now left].
+        -- right. split; [exact Hzero|]. right. now apply Hpreserve.
+      * intros d. specialize (Hcard d).
+        destruct Hcard as [Hzero|[Htwo|[Hone Hreason]]].
+        -- now left.
+        -- now right; left.
+        -- right; right. split; [exact Hone|].
+           destruct Hreason as [Hdwork|[Hpendingreason|Hdecided]].
+           ++ simpl in Hdwork. destruct Hdwork as [->|Hdwork].
+              ** right; right. exact Hcdecided.
+              ** now left.
            ++ now right; left.
-           ++ right; right. split; [exact Hone|].
-              destruct Hreason as [Hdwork|Hpendingreason].
-              ** simpl in Hdwork. destruct Hdwork as [Heq|Hdwork];
-                   [contradiction|now left].
-              ** now right.
+           ++ right; right. now apply Hpreserve.
 Qed.
 
 Lemma propagate_decided_inv : forall work m cm sat fals pending c cm' sat' fals',
@@ -627,17 +629,25 @@ Proof.
   pose proof Hinv as Hinv'.
   destruct Hinv as [Hsat [Hfals Hrest]].
   destruct Hspec as [[Htrue [-> [-> ->]]]|[Hfalse [Hfilter [-> [-> ->]]]]].
-  - eapply remove_active_inv.
+  - eapply decide_active_inv.
     + exact Hinv'.
     + intros d Hd. simpl in Hd. destruct Hd as [->|Hd];
         [now rewrite Htrue|exact (Hsat d Hd)].
     + exact Hfals.
-  - eapply remove_active_inv.
+    + left. now left.
+    + intros d [Hd|Hd].
+      * left. now right.
+      * now right.
+  - eapply decide_active_inv.
     + exact Hinv'.
     + exact Hsat.
     + intros d Hd. simpl in Hd. destruct Hd as [->|Hd].
       * split; [now rewrite Hfalse|exact Hfilter].
       * exact (Hfals d Hd).
+    + right. now left.
+    + intros d [Hd|Hd].
+      * now left.
+      * right. now right.
 Qed.
 
 Lemma propagate_inv : forall c work s,
@@ -716,8 +726,8 @@ Proof.
                  --- lia.
                  --- left. rewrite Hcount, Htwo in Hremove. lia.
                  --- right. split; [rewrite Hcount, Hone in Hremove; lia|].
-                     destruct Hreason as [Habs|[p Hpc]];
-                       [contradiction|now exists p].
+                     destruct Hreason as [Habs|Hotherreason];
+                       [contradiction|exact Hotherreason].
               ** intros c.
                  pose proof (ClauseMap.card_of_remove cm c (literal_var l))
                    as Hremove.
@@ -746,7 +756,7 @@ Proof.
                      +++ right; right. split.
                          *** rewrite Hcount, Hone in Hremove. lia.
                          ***
-                         destruct Hreason as [Habs|Hpendingreason];
+                         destruct Hreason as [Habs|Hotherreason];
                            [contradiction|now right].
 Qed.
 
@@ -769,55 +779,59 @@ Proof.
   now apply prepare_set_lit_inv.
 Qed.
 
-Lemma remove_pending_inv : forall l c pending m cm sat fals,
-  state_invariant
+Lemma resolve_pending_staged_inv : forall work l c pending m cm sat fals,
+  staged_invariant work
     {| state_model := m; state_clauses := cm;
        state_satisfied := sat; state_falsified := fals;
        state_pending := (l, c) :: pending |} ->
-  state_invariant
-    {| state_model := m; state_clauses := ClauseMap.remove_clause c cm;
-       state_satisfied := sat; state_falsified := fals;
+  Is_true (existsb (literal_is_true m) c) ->
+  staged_invariant work
+    {| state_model := m; state_clauses := cm;
+       state_satisfied := c :: sat; state_falsified := fals;
        state_pending := pending |}.
 Proof.
-  intros l c pending m cm sat fals Hinv.
+  intros work l c pending m cm sat fals Hinv Hctrue.
   destruct Hinv as
-    [Hsat [Hfals [Hwatch [Hnodup [_ [Hpending [_ Hcard]]]]]]].
-  split; [exact Hsat|]. split; [exact Hfals|]. split.
-  - intros v d Hin. apply ClauseMap.find_remove_clause in Hin as [Hin _].
-    exact (Hwatch v d Hin).
-  - split.
-    + intros v. cbn [state_clauses]. rewrite ClauseMap.find_remove_clause_eq.
-      apply NoDup_filter. apply Hnodup.
-    + split; [constructor|]. split.
-      * intros p d Hpd. exact (Hpending p d (or_intror Hpd)).
-      * split; [intros d Habs; contradiction|]. intros d.
-        destruct (clause_eq_dec c d) as [->|Hcd].
-        -- unfold card_of_watch. cbn -[ClauseMap.card_of].
-           rewrite ClauseMap.card_of_remove_clause_eq. now left.
-        -- specialize (Hcard d).
-           unfold card_of_watch in Hcard |- *.
-           cbn -[ClauseMap.card_of] in Hcard |- *.
-           rewrite (ClauseMap.card_of_remove_clause_neq cm c d Hcd).
-           destruct Hcard as [Hzero|[Htwo|[Hone [Habs|[p Hpd]]]]].
+    [Hsat [Hfals [Hwatch [Hnodup [Hworknodup
+      [Hpending [Hwork Hcard]]]]]]].
+  assert (forall d, clause_is_decided d
+      {| state_model := m; state_clauses := cm;
+         state_satisfied := sat; state_falsified := fals;
+         state_pending := (l, c) :: pending |} ->
+    clause_is_decided d
+      {| state_model := m; state_clauses := cm;
+         state_satisfied := c :: sat; state_falsified := fals;
+         state_pending := pending |}) as Hdecided.
+  { intros d [Hd|Hd]; [left; now right|now right]. }
+  assert (forall d, (exists p, In (p, d) ((l, c) :: pending)) ->
+    (exists p, In (p, d) pending) \/
+    clause_is_decided d
+      {| state_model := m; state_clauses := cm;
+         state_satisfied := c :: sat; state_falsified := fals;
+         state_pending := pending |}) as Hreason.
+  { intros d [p Hpd]. simpl in Hpd. destruct Hpd as [Heq|Hpd].
+    - injection Heq as <- <-. right. left. now left.
+    - left. now exists p. }
+  split.
+  - intros d Hd. simpl in Hd. destruct Hd as [->|Hd]; [exact Hctrue|exact (Hsat d Hd)].
+  - split; [exact Hfals|]. split; [exact Hwatch|]. split; [exact Hnodup|].
+    split; [exact Hworknodup|]. split.
+    + intros p d Hpd. exact (Hpending p d (or_intror Hpd)).
+    + split.
+      * intros d Hdwork. specialize (Hwork d Hdwork).
+        destruct Hwork as [Hone|[Hzero [Hpendingreason|Holddecided]]].
+        -- now left.
+        -- right. split; [exact Hzero|exact (Hreason d Hpendingreason)].
+        -- right. split; [exact Hzero|]. right. now apply Hdecided.
+      * intros d. specialize (Hcard d).
+        destruct Hcard as [Hzero|[Htwo|[Hone Hwhy]]].
+        -- now left.
+        -- now right; left.
+        -- right; right. split; [exact Hone|].
+           destruct Hwhy as [Hdwork|[Hpendingreason|Holddecided]].
            ++ now left.
-           ++ now right; left.
-           ++ contradiction.
-           ++ right; right. split; [exact Hone|]. right. exists p.
-              simpl in Hpd. destruct Hpd as [Heq|Hpd]; [congruence|exact Hpd].
-Qed.
-
-Lemma staged_add_satisfied : forall work s c,
-  staged_invariant work s ->
-  Is_true (existsb (literal_is_true s.(state_model)) c) ->
-  staged_invariant work
-    {| state_model := s.(state_model); state_clauses := s.(state_clauses);
-       state_satisfied := c :: s.(state_satisfied);
-       state_falsified := s.(state_falsified);
-       state_pending := s.(state_pending) |}.
-Proof.
-  intros work [m cm sat fals pending] c Hinv Htrue.
-  destruct Hinv as [Hsat Hrest]. split; [|exact Hrest].
-  intros d Hd. simpl in Hd. destruct Hd as [->|Hd]; [exact Htrue|exact (Hsat d Hd)].
+           ++ right. exact (Hreason d Hpendingreason).
+           ++ right; right. now apply Hdecided.
 Qed.
 
 Lemma set_pending_inv : forall l c pending m cm sat fals,
@@ -828,7 +842,7 @@ Lemma set_pending_inv : forall l c pending m cm sat fals,
        state_pending := (l, c) :: pending |} ->
   state_invariant
     (set_lit l
-      {| state_model := m; state_clauses := ClauseMap.remove_clause c cm;
+      {| state_model := m; state_clauses := cm;
          state_satisfied := c :: sat; state_falsified := fals;
          state_pending := pending |}).
 Proof.
@@ -836,17 +850,16 @@ Proof.
   pose proof Hinv as Hpendinginv.
   destruct Hpendinginv as [_ [_ [_ [_ [_ [Hpending _]]]]]].
   destruct (Hpending l c (or_introl eq_refl)) as [Hlc _].
-  pose proof (remove_pending_inv l c pending m cm sat fals Hinv) as Hremoved.
   unfold set_lit. cbn [state_model state_clauses state_satisfied
     state_falsified state_pending].
   apply fold_propagate_inv.
-  pose proof (prepare_set_lit_inv l m (ClauseMap.remove_clause c cm)
-    sat fals pending Hlu Hremoved) as Hprepared.
-  destruct Hprepared as [Hsat Hrest]. split; [|exact Hrest].
-  intros d Hd. simpl in Hd. destruct Hd as [->|Hd].
-  - apply Is_true_eq_left. apply existsb_exists. exists l.
-    split; [exact Hlc|apply literal_is_true_cons_self].
-  - exact (Hsat d Hd).
+  pose proof (prepare_set_lit_inv l m cm sat fals ((l, c) :: pending)
+    Hlu Hinv) as Hprepared.
+  apply (resolve_pending_staged_inv
+    (ClauseMap.find (literal_var l) cm) l c pending
+    (l :: m) (ClauseMap.remove (literal_var l) cm) sat fals Hprepared).
+  apply Is_true_eq_left. apply existsb_exists. exists l.
+  split; [exact Hlc|apply literal_is_true_cons_self].
 Qed.
 
 Lemma resolve_true_pending_inv : forall l c pending m cm sat fals,
@@ -856,7 +869,7 @@ Lemma resolve_true_pending_inv : forall l c pending m cm sat fals,
        state_satisfied := sat; state_falsified := fals;
        state_pending := (l, c) :: pending |} ->
   state_invariant
-    {| state_model := m; state_clauses := ClauseMap.remove_clause c cm;
+    {| state_model := m; state_clauses := cm;
        state_satisfied := c :: sat; state_falsified := fals;
        state_pending := pending |}.
 Proof.
@@ -864,11 +877,8 @@ Proof.
   pose proof Hinv as Hpendinginv.
   destruct Hpendinginv as [_ [_ [_ [_ [_ [Hpending _]]]]]].
   destruct (Hpending l c (or_introl eq_refl)) as [Hlc _].
-  pose proof (remove_pending_inv l c pending m cm sat fals Hinv) as Hremoved.
-  destruct Hremoved as [Hsat Hrest]. split; [|exact Hrest].
-  intros d Hd. simpl in Hd. destruct Hd as [->|Hd].
-  - apply Is_true_eq_left. apply existsb_exists. now exists l.
-  - exact (Hsat d Hd).
+  apply (resolve_pending_staged_inv [] l c pending m cm sat fals Hinv).
+  apply Is_true_eq_left. apply existsb_exists. now exists l.
 Qed.
 
 Lemma finish_progress_inv : forall s s',

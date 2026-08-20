@@ -52,30 +52,7 @@ Module ClauseElement.
   Definition eq_dec := clause_eq_dec.
 End ClauseElement.
 
-Module ClauseMapBase := ListMap.Make VarKey ClauseElement.
-
-Module ClauseMap.
-  Include ClauseMapBase.
-
-  Definition remove_clause := remove_element.
-
-  Lemma card_of_remove_clause_eq : forall m c,
-    card_of c (remove_clause c m) = 0.
-  Proof. exact card_of_remove_element_eq. Qed.
-
-  Lemma card_of_remove_clause_neq : forall m c d,
-    c <> d -> card_of d (remove_clause c m) = card_of d m.
-  Proof. exact card_of_remove_element_neq. Qed.
-
-  Lemma find_remove_clause : forall m c d v,
-    In d (find v (remove_clause c m)) <-> In d (find v m) /\ d <> c.
-  Proof. exact find_remove_element. Qed.
-
-  Lemma find_remove_clause_eq : forall m c v,
-    find v (remove_clause c m) =
-      filter (fun c' => if clause_eq_dec c c' then false else true) (find v m).
-  Proof. exact find_remove_element_eq. Qed.
-End ClauseMap.
+Module ClauseMap := ListMap.Make VarKey ClauseElement.
 
 Record State := {
   state_model : Model;
@@ -138,10 +115,10 @@ Definition scan_clause (m : Model) (c : Clause)
     (cm : ClauseMap.t) (sat fals : list Clause) : scan_result :=
   let '(satisfied, undecided) := scan_clause_once m c in
   if satisfied then
-      clause_decided (ClauseMap.remove_clause c cm) (c :: sat) fals
+      clause_decided cm (c :: sat) fals
   else
     match undecided with
-    | [] => clause_decided (ClauseMap.remove_clause c cm) sat (c :: fals)
+    | [] => clause_decided cm sat (c :: fals)
     | l :: undecided' =>
         match find_different_var (literal_var l) undecided' with
         | None => propagate_literal l
@@ -194,7 +171,7 @@ Definition progress_state (s : State) : State :=
       match literal_value s.(state_model) l with
       | Some true =>
         {| state_model := s.(state_model);
-           state_clauses := ClauseMap.remove_clause c s.(state_clauses);
+           state_clauses := s.(state_clauses);
            state_satisfied := c :: s.(state_satisfied);
            state_falsified := s.(state_falsified);
            state_pending := pending |}
@@ -207,7 +184,7 @@ Definition progress_state (s : State) : State :=
       | None =>
         set_lit l
           {| state_model := s.(state_model);
-             state_clauses := ClauseMap.remove_clause c s.(state_clauses);
+             state_clauses := s.(state_clauses);
              state_satisfied := c :: s.(state_satisfied);
              state_falsified := s.(state_falsified);
              state_pending := pending |}
