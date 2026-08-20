@@ -9,6 +9,15 @@ Require Import FMV.FiniteMap.
 Require Import FMV.ListMap.
 Require Import FMV.Map.
 
+(* General architecture:
+   - Iterate until find a model or a definite contradiction:
+     - Attempt to guess a model with the `rush` function
+       - Rush is simply an iteration of the `progress` function which steps
+         through the CDCL algorithm. Either deciding or propagating a literal at
+         every iteration.
+     - (TODO) Learn a conflict clause and backtrack.
+ *)
+
 Definition Var := nat.
 Variant Literal :=
   | Pos (l : Var)
