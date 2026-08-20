@@ -109,6 +109,9 @@ Definition literal_is_true (m : Model) (l : Literal) : bool :=
 Definition literal_is_undecided (m : Model) (l : Literal) : bool :=
   match literal_value m l with None => true | _ => false end.
 
+Definition literal_is_decided (m : Model) (l : Literal) : Prop :=
+  literal_is_undecided m l = false.
+
 Fixpoint scan_clause_once (m : Model) (c : Clause) : bool * list Literal :=
   match c with
   | [] => (false, [])
@@ -188,19 +191,27 @@ Definition set_lit (l : Literal) (s : State) : State :=
 Definition progress_state (s : State) : State :=
   match s.(state_pending) with
   | (l, c) :: pending =>
-      if in_dec literal_eq_dec l s.(state_model) then
+      match literal_value s.(state_model) l with
+      | Some true =>
+        {| state_model := s.(state_model);
+           state_clauses := ClauseMap.remove_clause c s.(state_clauses);
+           state_satisfied := c :: s.(state_satisfied);
+           state_falsified := s.(state_falsified);
+           state_pending := pending |}
+      | Some false =>
         {| state_model := s.(state_model);
            state_clauses := s.(state_clauses);
            state_satisfied := s.(state_satisfied);
            state_falsified := s.(state_falsified);
            state_pending := pending |}
-      else
+      | None =>
         set_lit l
           {| state_model := s.(state_model);
              state_clauses := ClauseMap.remove_clause c s.(state_clauses);
              state_satisfied := c :: s.(state_satisfied);
              state_falsified := s.(state_falsified);
              state_pending := pending |}
+      end
   | [] =>
       match hd_error (ClauseMap.keys s.(state_clauses)) with
       | None => s (* All the literal have been decided so no progress can be made *)
@@ -213,11 +224,20 @@ Variant progress_result :=
   | Progress (s : State)
   | Conflict (explanation : Conj).
 
-Definition progress (s : State) : progress_result :=
-  let s' := progress_state s in
-  match s'.(state_falsified) with
-  | [] => Progress s'
+Definition finish_progress (s : State) : progress_result :=
+  match s.(state_falsified) with
+  | [] => Progress s
   | c :: _ => Conflict (neg c)
+  end.
+
+Definition progress (s : State) : progress_result :=
+  match s.(state_pending) with
+  | (l, c) :: _ =>
+      match literal_value s.(state_model) l with
+      | Some false => Conflict (neg c)
+      | _ => finish_progress (progress_state s)
+      end
+  | [] => finish_progress (progress_state s)
   end.
 
 Definition is_empty {A} (l : list A) : bool :=
