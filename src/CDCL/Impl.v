@@ -7,6 +7,7 @@ Require Import Stdlib.Arith.Arith.
 Require Import Stdlib.micromega.Lia.
 Require Import FMV.FiniteMap.
 Require Import FMV.ListMap.
+Require Import FMV.Map.
 
 Definition Var := nat.
 Variant Literal :=
@@ -20,6 +21,7 @@ Definition neg_lit (l : Literal) : Literal :=
   end.
 
 Definition Clause := list Literal.
+Definition ClauseId := nat.
 
 Definition Problem := list Clause.
 
@@ -32,7 +34,7 @@ Definition neg (c : Clause) : Conj := map neg_lit c.
    to be true, `Neg` literals are known to be false. The rest is (yet)
    undecided. *)
 Definition Model := list Literal.
-Definition Pending := list (Literal * Clause).
+Definition Pending := list (Literal * ClauseId).
 
 Definition literal_eq_dec (l r : Literal) : {l = r} + {l <> r}.
 Proof.
@@ -47,19 +49,25 @@ Module VarKey.
   Definition eq_dec := Nat.eq_dec.
 End VarKey.
 
-Module ClauseElement.
-  Definition t := Clause.
-  Definition eq_dec := clause_eq_dec.
-End ClauseElement.
+Module ClauseIdElement.
+  Definition t := ClauseId.
+  Definition eq_dec := Nat.eq_dec.
+End ClauseIdElement.
 
-Module ClauseMap := ListMap.Make VarKey ClauseElement.
+Module ClauseMap := ListMap.Make VarKey ClauseIdElement.
+
+Module ClauseValue.
+  Definition t := Clause.
+End ClauseValue.
+
+Module ClauseStore := Map.Make VarKey ClauseValue.
 
 Record State := {
   state_model : Model;
-  (*  `state_clauses` implements two-literal watch*)
-  state_clauses : ClauseMap.t;
-  state_satisfied : list Clause;
-  state_falsified : list Clause;
+  state_clauses : ClauseStore.t;
+  (* `state_watched` implements two-literal watch. *)
+  state_watched : ClauseMap.t;
+  state_falsified : list ClauseId;
   state_pending : Pending;
 }.
 
@@ -99,8 +107,8 @@ Fixpoint scan_clause_once (m : Model) (c : Clause) : bool * list Literal :=
   end.
 
 Variant scan_result :=
-  | propagate_literal (l : Literal)
-  | clause_decided (cm : ClauseMap.t) (sat fals : list Clause)
+  | propagate_literal (l : Literal) (cm : ClauseMap.t)
+  | clause_decided (cm : ClauseMap.t) (fals : list ClauseId)
   | clause_watched (cm : ClauseMap.t).
 
 Fixpoint find_different_var (v : Var) (ls : list Literal) : option Literal :=
@@ -111,49 +119,59 @@ Fixpoint find_different_var (v : Var) (ls : list Literal) : option Literal :=
   end.
 
 (* Is [c] satisfied? falsified? otherwise watch an additional literal *)
-Definition scan_clause (m : Model) (c : Clause)
-    (cm : ClauseMap.t) (sat fals : list Clause) : scan_result :=
+Definition scan_clause (m : Model) (ci : ClauseId) (c : Clause)
+    (cm : ClauseMap.t) (fals : list ClauseId) : scan_result :=
   let '(satisfied, undecided) := scan_clause_once m c in
   if satisfied then
-      clause_decided cm (c :: sat) fals
+      clause_decided cm fals
   else
     match undecided with
-    | [] => clause_decided cm sat (c :: fals)
+    | [] => clause_decided cm (ci :: fals)
     | l :: undecided' =>
         match find_different_var (literal_var l) undecided' with
-        | None => propagate_literal l
+        | None =>
+            if in_dec Nat.eq_dec ci (ClauseMap.find (literal_var l) cm) then
+              propagate_literal l cm
+            else
+              propagate_literal l
+                (ClauseMap.add (literal_var l) ci cm)
         | Some l' =>
-            if in_dec clause_eq_dec c (ClauseMap.find (literal_var l) cm) then
-              clause_watched (ClauseMap.add (literal_var l') c cm)
-            else clause_watched (ClauseMap.add (literal_var l) c cm)
+            if in_dec Nat.eq_dec ci (ClauseMap.find (literal_var l) cm) then
+              clause_watched (ClauseMap.add (literal_var l') ci cm)
+            else clause_watched (ClauseMap.add (literal_var l) ci cm)
         end
     end.
 
-Definition propagate (c : Clause) (s : State) : State :=
-  match scan_clause s.(state_model) c s.(state_clauses)
-      s.(state_satisfied) s.(state_falsified) with
-  | propagate_literal l =>
+Definition propagate (ci : ClauseId) (s : State) : State :=
+  match ClauseStore.find ci s.(state_clauses) with
+  | None => s
+  | Some c =>
+    match scan_clause s.(state_model) ci c s.(state_watched)
+        s.(state_falsified) with
+    | propagate_literal l cm =>
       {| state_model := s.(state_model);
          state_clauses := s.(state_clauses);
-         state_satisfied := s.(state_satisfied);
+         state_watched := cm;
          state_falsified := s.(state_falsified);
-         state_pending := (l, c) :: s.(state_pending) |}
-  | clause_decided cm sat fals =>
-      {| state_model := s.(state_model); state_clauses := cm;
-         state_satisfied := sat; state_falsified := fals;
+         state_pending := (l, ci) :: s.(state_pending) |}
+    | clause_decided cm fals =>
+      {| state_model := s.(state_model); state_clauses := s.(state_clauses);
+         state_watched := cm;
+         state_falsified := fals;
          state_pending := s.(state_pending) |}
-  | clause_watched cm =>
-      {| state_model := s.(state_model); state_clauses := cm;
-         state_satisfied := s.(state_satisfied);
+    | clause_watched cm =>
+      {| state_model := s.(state_model); state_clauses := s.(state_clauses);
+         state_watched := cm;
          state_falsified := s.(state_falsified);
          state_pending := s.(state_pending) |}
+    end
   end.
 
 Definition set_lit (l : Literal) (s : State) : State :=
-  let watched := ClauseMap.find (literal_var l) s.(state_clauses) in
-  let cm := ClauseMap.remove (literal_var l) s.(state_clauses) in
+  let watched := ClauseMap.find (literal_var l) s.(state_watched) in
+  let cm := ClauseMap.remove (literal_var l) s.(state_watched) in
   let s' := {| state_model := l :: s.(state_model);
-      state_clauses := cm; state_satisfied := s.(state_satisfied);
+      state_clauses := s.(state_clauses); state_watched := cm;
       state_falsified := s.(state_falsified);
       state_pending := s.(state_pending) |} in
   fold_left (fun s c => propagate c s) watched s'.
@@ -172,25 +190,25 @@ Definition progress_state (s : State) : State :=
       | Some true =>
         {| state_model := s.(state_model);
            state_clauses := s.(state_clauses);
-           state_satisfied := c :: s.(state_satisfied);
+           state_watched := s.(state_watched);
            state_falsified := s.(state_falsified);
            state_pending := pending |}
       | Some false =>
         {| state_model := s.(state_model);
            state_clauses := s.(state_clauses);
-           state_satisfied := s.(state_satisfied);
+           state_watched := s.(state_watched);
            state_falsified := s.(state_falsified);
            state_pending := pending |}
       | None =>
         set_lit l
           {| state_model := s.(state_model);
              state_clauses := s.(state_clauses);
-             state_satisfied := c :: s.(state_satisfied);
+             state_watched := s.(state_watched);
              state_falsified := s.(state_falsified);
              state_pending := pending |}
       end
   | [] =>
-      match hd_error (ClauseMap.keys s.(state_clauses)) with
+      match hd_error (ClauseMap.keys s.(state_watched)) with
       | None => s (* All the literal have been decided so no progress can be made *)
       | Some v =>
           set_lit (Pos v) s
@@ -204,14 +222,22 @@ Variant progress_result :=
 Definition finish_progress (s : State) : progress_result :=
   match s.(state_falsified) with
   | [] => Progress s
-  | c :: _ => Conflict (neg c)
+  | ci :: _ =>
+      match ClauseStore.find ci s.(state_clauses) with
+      | Some c => Conflict (neg c)
+      | None => Conflict []
+      end
   end.
 
 Definition progress (s : State) : progress_result :=
   match s.(state_pending) with
   | (l, c) :: _ =>
       match literal_value s.(state_model) l with
-      | Some false => Conflict (neg c)
+      | Some false =>
+          match ClauseStore.find c s.(state_clauses) with
+          | Some clause => Conflict (neg clause)
+          | None => Conflict []
+          end
       | _ => finish_progress (progress_state s)
       end
   | [] => finish_progress (progress_state s)
@@ -243,7 +269,7 @@ Arguments Later {A}.
 
 CoFixpoint rush (s : State) : Delay (option Model) :=
   (* TODO: add an is_empty predicate to ClauseMap directly *)
-  if is_empty (ClauseMap.keys s.(state_clauses)) then
+  if is_empty (ClauseMap.keys s.(state_watched)) then
     Now (Some s.(state_model))
   else
     match progress s with

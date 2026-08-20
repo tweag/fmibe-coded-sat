@@ -22,8 +22,6 @@ Module Type ListMapSig (Key : DecidableType) (Element : DecidableType).
   Parameter keys : t -> list Key.t.
   Parameter add : Key.t -> Element.t -> t -> t.
   Parameter remove : Key.t -> t -> t.
-  Parameter remove_from : Element.t -> list Element.t -> list Element.t.
-  Parameter remove_element : Element.t -> t -> t.
   Parameter card_of : Element.t -> t -> nat.
   Parameter elements : t -> list Element.t.
   Axiom find_empty : forall k, find k empty = [].
@@ -42,23 +40,16 @@ Module Type ListMapSig (Key : DecidableType) (Element : DecidableType).
   Axiom card_of_remove : forall m x k,
     card_of x (remove k m) + count_occ Element.eq_dec (find k m) x =
       card_of x m.
-  Axiom card_of_remove_element_eq : forall m x,
-    card_of x (remove_element x m) = 0.
-  Axiom card_of_remove_element_neq : forall m x y,
-    x <> y -> card_of y (remove_element x m) = card_of y m.
   Axiom card_of_unique : forall m x k k',
     card_of x m = 1 -> In x (find k m) -> In x (find k' m) -> k = k'.
   Axiom card_of_in : forall m x k, In x (find k m) -> card_of x m > 0.
+  Axiom card_of_pos : forall m x,
+    card_of x m > 0 -> exists k, In x (find k m).
   Axiom find_remove : forall m k x k',
     In x (find k (remove k' m)) <-> In x (find k m) /\ k <> k'.
   Axiom find_remove_eq : forall m k k',
     find k (remove k' m) =
       if Key.eq_dec k' k then [] else find k m.
-  Axiom find_remove_element : forall m x y k,
-    In y (find k (remove_element x m)) <->
-      In y (find k m) /\ y <> x.
-  Axiom find_remove_element_eq : forall m x k,
-    find k (remove_element x m) = remove_from x (find k m).
   Axiom elements_spec : forall m x,
     In x (elements m) <-> exists k, In k (keys m) /\ In x (find k m).
 End ListMapSig.
@@ -84,12 +75,6 @@ Module Make (Key : DecidableType) (Element : DecidableType) <: ListMapSig Key El
   Definition add (k : Key.t) (x : Element.t) (m : t) : t :=
     Base.add k [x] m.
   Definition remove (k : Key.t) (m : t) : t := Base.remove k m.
-
-  Definition remove_from (x : Element.t) (xs : list Element.t) : list Element.t :=
-    filter (fun y => if Element.eq_dec x y then false else true) xs.
-
-  Definition remove_element (x : Element.t) (m : t) : t :=
-    Base.map_values (remove_from x) eq_refl m.
 
   Definition elements (m : t) : list Element.t :=
     flat_map (fun k => find k m) (Base.keys m).
@@ -257,50 +242,6 @@ Module Make (Key : DecidableType) (Element : DecidableType) <: ListMapSig Key El
       lia.
   Qed.
 
-  Lemma count_occ_remove_from_eq : forall xs x,
-    count_occ Element.eq_dec (remove_from x xs) x = 0.
-  Proof.
-    intros xs. induction xs as [|y xs IH]; intros x; simpl.
-    - reflexivity.
-    - destruct (Element.eq_dec x y) as [->|Hneq]; simpl.
-      + exact (IH y).
-      + destruct (Element.eq_dec y x); [congruence|exact (IH x)].
-  Qed.
-
-  Lemma count_occ_remove_from_neq : forall xs x y,
-    x <> y ->
-    count_occ Element.eq_dec (remove_from x xs) y =
-      count_occ Element.eq_dec xs y.
-  Proof.
-    intros xs. induction xs as [|z xs IH]; intros x y Hneq; simpl.
-    - reflexivity.
-    - destruct (Element.eq_dec x z) as [->|Hxz]; simpl.
-      + destruct (Element.eq_dec z y); [congruence|]. apply IH. exact Hneq.
-      + destruct (Element.eq_dec z y); simpl; rewrite IH by exact Hneq;
-          reflexivity.
-  Qed.
-
-  Lemma card_of_remove_element_eq : forall m x,
-    card_of x (remove_element x m) = 0.
-  Proof.
-    intros m x. unfold card_of, elements, remove_element, find,
-      Base.map_values. simpl.
-    unfold Base.keys. induction (Base.support m) as [|k ks IH];
-      simpl; [reflexivity|].
-    rewrite count_occ_app, count_occ_remove_from_eq, IH. reflexivity.
-  Qed.
-
-  Lemma card_of_remove_element_neq : forall m x y,
-    x <> y -> card_of y (remove_element x m) = card_of y m.
-  Proof.
-    intros m x y Hneq. unfold card_of, elements, remove_element, find,
-      Base.map_values. simpl.
-    unfold Base.keys. induction (Base.support m) as [|k ks IH];
-      simpl; [reflexivity|].
-    rewrite !count_occ_app, count_occ_remove_from_neq by exact Hneq.
-    now rewrite IH.
-  Qed.
-
   Lemma find_remove_eq : forall m k k',
     find k (remove k' m) =
       if Key.eq_dec k' k then [] else find k m.
@@ -311,24 +252,6 @@ Module Make (Key : DecidableType) (Element : DecidableType) <: ListMapSig Key El
   Proof.
     intros. rewrite find_remove_eq. destruct (Key.eq_dec k' k) as [->|Hneq];
       simpl; firstorder congruence.
-  Qed.
-
-  Lemma find_remove_element_eq : forall m x k,
-    find k (remove_element x m) = remove_from x (find k m).
-  Proof. reflexivity. Qed.
-
-  Lemma find_remove_element : forall m x y k,
-    In y (find k (remove_element x m)) <->
-      In y (find k m) /\ y <> x.
-  Proof.
-    intros. rewrite find_remove_element_eq. unfold remove_from.
-    rewrite filter_In. destruct (Element.eq_dec x y) as [->|Hneq].
-    - destruct (Element.eq_dec y y) as [_|Habs]; [|contradiction].
-      split.
-      + intros [_ H]. discriminate.
-      + intros [_ H]. contradiction.
-    - destruct (Element.eq_dec x y) as [Habs|_]; [contradiction|].
-      simpl. firstorder congruence.
   Qed.
 
   Lemma elements_spec : forall m x,
@@ -346,6 +269,15 @@ Module Make (Key : DecidableType) (Element : DecidableType) <: ListMapSig Key El
     intros m x k Hin. unfold card_of. apply count_occ_In.
     apply elements_spec. exists k. split; [|exact Hin].
     apply keys_complete. intros Hempty. rewrite Hempty in Hin. contradiction.
+  Qed.
+
+  Lemma card_of_pos : forall m x,
+    card_of x m > 0 -> exists k, In x (find k m).
+  Proof.
+    intros m x Hpos.
+    assert (In x (elements m)) as Hin.
+    { apply (proj2 (count_occ_In Element.eq_dec (elements m) x)). exact Hpos. }
+    apply elements_spec in Hin as [k [_ Hin]]. now exists k.
   Qed.
 
   Lemma card_of_unique : forall m x k k',
