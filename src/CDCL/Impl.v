@@ -276,6 +276,8 @@ CoInductive Delay A :=
 Arguments Now {A}.
 Arguments Later {A}.
 
+(* Note: here's a termination metric, the lexicographically ordered
+   `((number of watched literal - number of pending literal), number of pending literal)` *)
 CoFixpoint rush (s : State) : Delay (Model + Conj) :=
   (* TODO: add an is_empty predicate to ClauseMap directly *)
   if is_empty (ClauseMap.keys s.(state_watched)) then
