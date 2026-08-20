@@ -267,13 +267,13 @@ CoInductive Delay A :=
 Arguments Now {A}.
 Arguments Later {A}.
 
-CoFixpoint rush (s : State) : Delay (option Model) :=
+CoFixpoint rush (s : State) : Delay (Model + Conj) :=
   (* TODO: add an is_empty predicate to ClauseMap directly *)
   if is_empty (ClauseMap.keys s.(state_watched)) then
-    Now (Some s.(state_model))
+    Now (inl s.(state_model))
   else
     match progress s with
     | Progress s' => Later (rush s')
-    | Conflict _ => Now None
+    | Conflict explanation => Now (inr explanation)
     end.
     
