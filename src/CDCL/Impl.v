@@ -40,6 +40,20 @@ Proof.
   decide equality; apply Nat.eq_dec.
 Defined.
 
+Definition opposite_literal (l : Literal) : Literal :=
+  match l with
+  | Pos v => Neg v
+  | Neg v => Pos v
+  end.
+
+Definition literal_eqb (l r : Literal) : bool :=
+  if literal_eq_dec l r then true else false.
+
+Definition clause_has_opposite_literals (c : Clause) : bool :=
+  existsb
+    (fun l => existsb (literal_eqb (opposite_literal l)) c)
+    c.
+
 Definition clause_eq_dec : forall l r : Clause, {l = r} + {l <> r} :=
   list_eq_dec literal_eq_dec.
 
@@ -217,6 +231,53 @@ Definition progress_state (s : State) : State :=
 Variant progress_result :=
   | Progress (s : State)
   | Conflict (s : State) (cause : Clause).
+
+Definition fresh_clause_id (s : State) : ClauseId :=
+  S (fold_right Nat.max 0 (ClauseStore.keys s.(state_clauses))).
+
+Definition add_clause (s : State) (c : Clause) : progress_result :=
+  let ci := fresh_clause_id s in
+  let clauses := ClauseStore.add ci c s.(state_clauses) in
+  let base :=
+    {| state_model := s.(state_model);
+       state_clauses := clauses;
+       state_watched := s.(state_watched);
+       state_falsified := s.(state_falsified);
+       state_pending := s.(state_pending) |} in
+  let '(satisfied, undecided) := scan_clause_once s.(state_model) c in
+  if orb satisfied (clause_has_opposite_literals c) then
+    Progress base
+  else
+    match undecided with
+    | [] =>
+        let conflict_state :=
+          {| state_model := s.(state_model);
+             state_clauses := clauses;
+             state_watched := s.(state_watched);
+             state_falsified := ci :: s.(state_falsified);
+             state_pending := s.(state_pending) |} in
+        Conflict conflict_state c
+    | l :: undecided' =>
+        match find_different_var (literal_var l) undecided' with
+        | None =>
+            Progress
+              {| state_model := s.(state_model);
+                 state_clauses := clauses;
+                 state_watched :=
+                   ClauseMap.add (literal_var l) ci s.(state_watched);
+                 state_falsified := s.(state_falsified);
+                 state_pending := (l, ci) :: s.(state_pending) |}
+        | Some l' =>
+            Progress
+              {| state_model := s.(state_model);
+                 state_clauses := clauses;
+                 state_watched :=
+                   ClauseMap.add (literal_var l') ci
+                     (ClauseMap.add (literal_var l) ci s.(state_watched));
+                 state_falsified := s.(state_falsified);
+                 state_pending := s.(state_pending) |}
+        end
+    end.
 
 Definition finish_progress (s : State) : progress_result :=
   match s.(state_falsified) with
