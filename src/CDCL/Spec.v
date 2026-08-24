@@ -270,7 +270,7 @@ Definition staged_invariant (work : list ClauseId) (s : State) : Prop :=
   /\ (* Every watched reference exists and watches a literal of its clause. *)
   (forall v ci, In ci (ClauseMap.find v s.(state_watched)) ->
      exists c, ClauseStore.find ci s.(state_clauses) = Some c /\
-       ~ InL v s.(state_model) /\ InL v c /\
+       ~ InL v (trail_model s.(state_model)) /\ InL v c /\
        ~ has_opposite_literals c)
   /\ (forall v, NoDup (ClauseMap.find v s.(state_watched)))
   /\ NoDup work
@@ -296,6 +296,23 @@ Definition staged_invariant (work : list ClauseId) (s : State) : Prop :=
         decided_clause ci s))).
 
 Definition state_invariant (s : State) : Prop := staged_invariant [] s.
+
+Lemma staged_invariant_trail_ext : forall work t t' clauses cm fals pending,
+  trail_model t = trail_model t' ->
+  staged_invariant work
+    {| state_model := t; state_clauses := clauses; state_watched := cm;
+       state_falsified := fals; state_pending := pending |} ->
+  staged_invariant work
+    {| state_model := t'; state_clauses := clauses; state_watched := cm;
+       state_falsified := fals; state_pending := pending |}.
+Proof.
+  intros work t t' clauses cm fals pending Hmodel Hinv.
+  unfold staged_invariant, watched_clause, decided_clause,
+    card_of_watch in Hinv |- *.
+  cbn [state_model state_clauses state_watched state_falsified
+    state_pending] in Hinv |- *.
+  now rewrite <- Hmodel.
+Qed.
 
 Lemma empty_state_inv : forall m,
   state_invariant
@@ -938,7 +955,7 @@ Proof.
   - subst cm'. now apply watch_one_fresh_inv with (c := c).
 Qed.
 
-Lemma pending_cons_inv : forall work ci c clauses m cm fals pending l,
+Lemma pending_cons_inv : forall work ci c clauses (m : Trail) cm fals pending l,
   ClauseStore.find ci clauses = Some c ->
   clause_needs_literal m l c ->
   ~ has_opposite_literals c ->
@@ -1164,13 +1181,13 @@ Proof.
   simpl. apply IH. now apply propagate_inv.
 Qed.
 
-Lemma prepare_set_lit_inv : forall l m clauses cm fals pending,
+Lemma prepare_set_lit_inv : forall l (m : Trail) clauses cm fals pending,
   literal_is_undecided m l = true ->
   state_invariant
     {| state_model := m; state_clauses := clauses; state_watched := cm;
        state_falsified := fals; state_pending := pending |} ->
   staged_invariant (ClauseMap.find (literal_var l) cm)
-    {| state_model := l :: m; state_clauses := clauses;
+    {| state_model := Decision l :: m; state_clauses := clauses;
        state_watched := ClauseMap.remove (literal_var l) cm;
        state_falsified := fals; state_pending := pending |}.
 Proof.
@@ -1182,7 +1199,7 @@ Proof.
         {| state_model := m; state_clauses := clauses; state_watched := cm;
            state_falsified := fals; state_pending := pending |} ->
       decided_clause d
-        {| state_model := l :: m; state_clauses := clauses;
+        {| state_model := Decision l :: m; state_clauses := clauses;
            state_watched := ClauseMap.remove (literal_var l) cm;
            state_falsified := fals; state_pending := pending |}).
   { intros d [Hd|[body [Hbody Htrue]]].
@@ -1211,7 +1228,8 @@ Proof.
   - intros v d Hin. apply ClauseMap.find_remove in Hin as [Hin Hneq].
     destruct (Hwatch v d Hin) as [body [Hbody [Hnotin [Hinc Hnoopp]]]].
     exists body. repeat split; try assumption.
-    intros Hin'. apply Hnotin. now apply (InL_cons_other l m v Hneq).
+    intros Hin'. apply Hnotin.
+    now apply (InL_cons_other l (trail_model m) v Hneq).
   - intros v. cbn [state_watched]. rewrite ClauseMap.find_remove_eq.
     destruct (VarKey.eq_dec (literal_var l) v); [constructor|apply Hnodup].
   - apply Hnodup.
@@ -1274,7 +1292,8 @@ Proof.
   apply fold_propagate_inv. now apply prepare_set_lit_inv.
 Qed.
 
-Lemma drop_satisfied_pending_inv : forall work l ci c pending m clauses cm fals,
+Lemma drop_satisfied_pending_inv : forall work l ci c pending (m : Trail)
+    clauses cm fals,
   ClauseStore.find ci clauses = Some c ->
   In l c -> Is_true (existsb (literal_is_true m) c) ->
   staged_invariant work
@@ -1316,14 +1335,14 @@ Proof.
       * right. right. exact Hdecided.
 Qed.
 
-Lemma set_pending_inv : forall l ci c pending m clauses cm fals,
+Lemma set_pending_inv : forall l ci c pending (m : Trail) clauses cm fals,
   ClauseStore.find ci clauses = Some c ->
   literal_is_undecided m l = true ->
   state_invariant
     {| state_model := m; state_clauses := clauses; state_watched := cm;
        state_falsified := fals; state_pending := (l, ci) :: pending |} ->
   state_invariant
-    (set_lit l
+    (set_propagated_lit l ci
       {| state_model := m; state_clauses := clauses; state_watched := cm;
          state_falsified := fals; state_pending := pending |}).
 Proof.
@@ -1334,18 +1353,22 @@ Proof.
     as [body [Hbody [Hneeds Hnoopp]]].
   cbn in Hbody.
   rewrite Hfind in Hbody. injection Hbody as <-.
-  unfold set_lit. cbn [state_model state_clauses state_watched
+  unfold set_propagated_lit, set_trail_entry.
+  cbn [trail_literal state_model state_clauses state_watched
     state_falsified state_pending].
   apply fold_propagate_inv.
   pose proof (prepare_set_lit_inv l m clauses cm fals ((l, ci) :: pending)
     Hlu Hinv) as Hprepared.
+  eapply staged_invariant_trail_ext in Hprepared.
+  2:{ cbn [trail_model trail_literal]. reflexivity. }
   eapply drop_satisfied_pending_inv;
     [exact Hfind|exact (proj1 Hneeds)| |exact Hprepared].
   apply Is_true_eq_left. apply existsb_exists. exists l.
   split; [exact (proj1 Hneeds)|apply literal_is_true_cons_self].
 Qed.
 
-Lemma resolve_true_pending_inv : forall l ci c pending m clauses cm fals,
+Lemma resolve_true_pending_inv : forall l ci c pending (m : Trail)
+    clauses cm fals,
   ClauseStore.find ci clauses = Some c ->
   literal_is_true m l = true ->
   state_invariant
@@ -1465,7 +1488,7 @@ Lemma propagate_clauses : forall ci s,
 Proof.
   intros ci [m clauses cm fals pending]. unfold propagate. cbn.
   destruct (ClauseStore.find ci clauses) as [c|]; [|reflexivity].
-  destruct (scan_clause m ci c cm fals); reflexivity.
+  destruct (scan_clause (map trail_literal m) ci c cm fals); reflexivity.
 Qed.
 
 Lemma fold_propagate_clauses : forall work s,
@@ -1483,14 +1506,23 @@ Proof.
   apply fold_propagate_clauses.
 Qed.
 
+Lemma set_propagated_lit_clauses : forall l cause s,
+  (set_propagated_lit l cause s).(state_clauses) = s.(state_clauses).
+Proof.
+  intros l cause [m clauses cm fals pending].
+  unfold set_propagated_lit, set_trail_entry. cbn.
+  apply fold_propagate_clauses.
+Qed.
+
 Lemma progress_state_clauses : forall s,
   (progress_state s).(state_clauses) = s.(state_clauses).
 Proof.
   intros [m clauses cm fals pending]. unfold progress_state. cbn.
   destruct pending as [|[l ci] pending].
   - destruct (hd_error (ClauseMap.keys cm)); [apply set_lit_clauses|reflexivity].
-  - destruct (literal_value m l) as [[|]|]; try reflexivity.
-    apply set_lit_clauses.
+  - destruct (literal_value (map trail_literal m) l) as [[|]|];
+      try reflexivity.
+    apply set_propagated_lit_clauses.
 Qed.
 
 Lemma progress_clauses : forall s s',

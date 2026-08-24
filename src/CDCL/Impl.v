@@ -35,6 +35,21 @@ Definition Problem := list Clause.
 Definition Model := list Literal.
 Definition Pending := list (Literal * ClauseId).
 
+Variant TrailEntry :=
+  | Decision (l : Literal)
+  | Propagation (l : Literal) (cause : ClauseId).
+
+Definition Trail := list TrailEntry.
+
+Definition trail_literal (entry : TrailEntry) : Literal :=
+  match entry with
+  | Decision l | Propagation l _ => l
+  end.
+
+Definition trail_model (trail : Trail) : Model := map trail_literal trail.
+
+Global Coercion trail_model : Trail >-> Model.
+
 Definition literal_eq_dec (l r : Literal) : {l = r} + {l <> r}.
 Proof.
   decide equality; apply Nat.eq_dec.
@@ -76,7 +91,7 @@ End ClauseValue.
 Module ClauseStore := Map.Make VarKey ClauseValue.
 
 Record State := {
-  state_model : Model;
+  state_model : Trail;
   state_clauses : ClauseStore.t;
   (* `state_watched` implements two-literal watch. *)
   state_watched : ClauseMap.t;
@@ -180,14 +195,22 @@ Definition propagate (ci : ClauseId) (s : State) : State :=
     end
   end.
 
-Definition set_lit (l : Literal) (s : State) : State :=
+Definition set_trail_entry (entry : TrailEntry) (s : State) : State :=
+  let l := trail_literal entry in
   let watched := ClauseMap.find (literal_var l) s.(state_watched) in
   let cm := ClauseMap.remove (literal_var l) s.(state_watched) in
-  let s' := {| state_model := l :: s.(state_model);
+  let s' := {| state_model := entry :: s.(state_model);
       state_clauses := s.(state_clauses); state_watched := cm;
       state_falsified := s.(state_falsified);
       state_pending := s.(state_pending) |} in
   fold_left (fun s c => propagate c s) watched s'.
+
+Definition set_lit (l : Literal) (s : State) : State :=
+  set_trail_entry (Decision l) s.
+
+Definition set_propagated_lit (l : Literal) (cause : ClauseId) (s : State)
+    : State :=
+  set_trail_entry (Propagation l cause) s.
 
 (* Game plan: to progress the state:
    - If there is a pending propagation, assign its literal using its clause as
@@ -213,7 +236,7 @@ Definition progress_state (s : State) : State :=
            state_falsified := s.(state_falsified);
            state_pending := pending |}
       | None =>
-        set_lit l
+        set_propagated_lit l c
           {| state_model := s.(state_model);
              state_clauses := s.(state_clauses);
              state_watched := s.(state_watched);
