@@ -91,7 +91,7 @@ End ClauseValue.
 Module ClauseStore := Map.Make VarKey ClauseValue.
 
 Record State := {
-  state_model : Trail;
+  state_trail : Trail;
   state_clauses : ClauseStore.t;
   (* `state_watched` implements two-literal watch. *)
   state_watched : ClauseMap.t;
@@ -174,21 +174,21 @@ Definition propagate (ci : ClauseId) (s : State) : State :=
   match ClauseStore.find ci s.(state_clauses) with
   | None => s
   | Some c =>
-    match scan_clause s.(state_model) ci c s.(state_watched)
+    match scan_clause s.(state_trail) ci c s.(state_watched)
         s.(state_falsified) with
     | propagate_literal l cm =>
-      {| state_model := s.(state_model);
+      {| state_trail := s.(state_trail);
          state_clauses := s.(state_clauses);
          state_watched := cm;
          state_falsified := s.(state_falsified);
          state_pending := (l, ci) :: s.(state_pending) |}
     | clause_decided cm fals =>
-      {| state_model := s.(state_model); state_clauses := s.(state_clauses);
+      {| state_trail := s.(state_trail); state_clauses := s.(state_clauses);
          state_watched := cm;
          state_falsified := fals;
          state_pending := s.(state_pending) |}
     | clause_watched cm =>
-      {| state_model := s.(state_model); state_clauses := s.(state_clauses);
+      {| state_trail := s.(state_trail); state_clauses := s.(state_clauses);
          state_watched := cm;
          state_falsified := s.(state_falsified);
          state_pending := s.(state_pending) |}
@@ -199,7 +199,7 @@ Definition set_trail_entry (entry : TrailEntry) (s : State) : State :=
   let l := trail_literal entry in
   let watched := ClauseMap.find (literal_var l) s.(state_watched) in
   let cm := ClauseMap.remove (literal_var l) s.(state_watched) in
-  let s' := {| state_model := entry :: s.(state_model);
+  let s' := {| state_trail := entry :: s.(state_trail);
       state_clauses := s.(state_clauses); state_watched := cm;
       state_falsified := s.(state_falsified);
       state_pending := s.(state_pending) |} in
@@ -222,22 +222,22 @@ Definition set_propagated_lit (l : Literal) (cause : ClauseId) (s : State)
 Definition progress_state (s : State) : State :=
   match s.(state_pending) with
   | (l, c) :: pending =>
-      match literal_value s.(state_model) l with
+      match literal_value s.(state_trail) l with
       | Some true =>
-        {| state_model := s.(state_model);
+        {| state_trail := s.(state_trail);
            state_clauses := s.(state_clauses);
            state_watched := s.(state_watched);
            state_falsified := s.(state_falsified);
            state_pending := pending |}
       | Some false =>
-        {| state_model := s.(state_model);
+        {| state_trail := s.(state_trail);
            state_clauses := s.(state_clauses);
            state_watched := s.(state_watched);
            state_falsified := s.(state_falsified);
            state_pending := pending |}
       | None =>
         set_propagated_lit l c
-          {| state_model := s.(state_model);
+          {| state_trail := s.(state_trail);
              state_clauses := s.(state_clauses);
              state_watched := s.(state_watched);
              state_falsified := s.(state_falsified);
@@ -255,6 +255,21 @@ Variant progress_result :=
   | Progress (s : State)
   | Conflict (s : State) (cause : Clause).
 
+Fixpoint negated_decisions (trail : Trail) : Clause :=
+  match trail with
+  | [] => []
+  | Decision l :: trail' => opposite_literal l :: negated_decisions trail'
+  | Propagation _ _ :: trail' => negated_decisions trail'
+  end.
+
+(* This first conflict analysis ignores the immediate conflict clause and
+   learns only that the decisions leading to it cannot all hold together. *)
+Definition analyze_conflict (s : State) (_conflict : Clause) : option Clause :=
+  match negated_decisions s.(state_trail) with
+  | [] => None
+  | learned => Some learned
+  end.
+
 Definition fresh_clause_id (s : State) : ClauseId :=
   S (fold_right Nat.max 0 (ClauseStore.keys s.(state_clauses))).
 
@@ -262,19 +277,19 @@ Definition add_clause (s : State) (c : Clause) : progress_result :=
   let ci := fresh_clause_id s in
   let clauses := ClauseStore.add ci c s.(state_clauses) in
   let base :=
-    {| state_model := s.(state_model);
+    {| state_trail := s.(state_trail);
        state_clauses := clauses;
        state_watched := s.(state_watched);
        state_falsified := s.(state_falsified);
        state_pending := s.(state_pending) |} in
-  let '(satisfied, undecided) := scan_clause_once s.(state_model) c in
+  let '(satisfied, undecided) := scan_clause_once s.(state_trail) c in
   if orb satisfied (clause_has_opposite_literals c) then
     Progress base
   else
     match undecided with
     | [] =>
         let conflict_state :=
-          {| state_model := s.(state_model);
+          {| state_trail := s.(state_trail);
              state_clauses := clauses;
              state_watched := s.(state_watched);
              state_falsified := ci :: s.(state_falsified);
@@ -284,7 +299,7 @@ Definition add_clause (s : State) (c : Clause) : progress_result :=
         match find_different_var (literal_var l) undecided' with
         | None =>
             Progress
-              {| state_model := s.(state_model);
+              {| state_trail := s.(state_trail);
                  state_clauses := clauses;
                  state_watched :=
                    ClauseMap.add (literal_var l) ci s.(state_watched);
@@ -292,7 +307,7 @@ Definition add_clause (s : State) (c : Clause) : progress_result :=
                  state_pending := (l, ci) :: s.(state_pending) |}
         | Some l' =>
             Progress
-              {| state_model := s.(state_model);
+              {| state_trail := s.(state_trail);
                  state_clauses := clauses;
                  state_watched :=
                    ClauseMap.add (literal_var l') ci
@@ -315,7 +330,7 @@ Definition finish_progress (s : State) : progress_result :=
 Definition progress (s : State) : progress_result :=
   match s.(state_pending) with
   | (l, c) :: _ =>
-      match literal_value s.(state_model) l with
+      match literal_value s.(state_trail) l with
       | Some false =>
           match ClauseStore.find c s.(state_clauses) with
           | Some clause => Conflict s clause
