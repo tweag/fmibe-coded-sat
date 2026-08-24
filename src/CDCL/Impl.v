@@ -216,15 +216,15 @@ Definition progress_state (s : State) : State :=
 
 Variant progress_result :=
   | Progress (s : State)
-  | Conflict (cause : Clause).
+  | Conflict (s : State) (cause : Clause).
 
 Definition finish_progress (s : State) : progress_result :=
   match s.(state_falsified) with
   | [] => Progress s
   | ci :: _ =>
       match ClauseStore.find ci s.(state_clauses) with
-      | Some c => Conflict c
-      | None => Conflict []
+      | Some c => Conflict s c
+      | None => Conflict s []
       end
   end.
 
@@ -234,8 +234,8 @@ Definition progress (s : State) : progress_result :=
       match literal_value s.(state_model) l with
       | Some false =>
           match ClauseStore.find c s.(state_clauses) with
-          | Some clause => Conflict clause
-          | None => Conflict []
+          | Some clause => Conflict s clause
+          | None => Conflict s []
           end
       | _ => finish_progress (progress_state s)
       end
@@ -268,13 +268,13 @@ Arguments Later {A}.
 
 (* Note: here's a termination metric, the lexicographically ordered
    `((number of watched literal - number of pending literal), number of pending literal)` *)
-CoFixpoint rush (s : State) : Delay (Model + Clause) :=
+CoFixpoint rush (s : State) : Delay (State + (State * Clause)) :=
   (* TODO: add an is_empty predicate to ClauseMap directly *)
   if is_empty (ClauseMap.keys s.(state_watched)) then
-    Now (inl s.(state_model))
+    Now (inl s)
   else
     match progress s with
     | Progress s' => Later (rush s')
-    | Conflict cause => Now (inr cause)
+    | Conflict s' cause => Now (inr (s', cause))
     end.
     
