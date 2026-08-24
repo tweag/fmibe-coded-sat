@@ -1126,7 +1126,7 @@ Lemma rush_unfold : forall s,
     else
       match progress s with
       | Progress s' => Later (rush s')
-      | Conflict explanation => Now (inr explanation)
+      | Conflict cause => Now (inr cause)
       end.
 Proof.
   intros s.
@@ -1155,13 +1155,13 @@ Proof.
     destruct (ClauseMap.keys s.(state_watched)) as [|v vs] eqn:Hkeys;
       cbn [is_empty] in Hrush.
     + injection Hrush as ->. now apply terminal_state_satisfies_clauses.
-    + destruct (progress s) as [s'|explanation] eqn:Hprogress;
+    + destruct (progress s) as [s'|cause] eqn:Hprogress;
         [discriminate|].
       injection Hrush as ->. exact I.
   - rewrite rush_unfold in Hrush.
     destruct (ClauseMap.keys s.(state_watched)) as [|v vs] eqn:Hkeys;
       cbn [is_empty] in Hrush; [discriminate|].
-    destruct (progress s) as [s'|explanation] eqn:Hprogress;
+    destruct (progress s) as [s'|cause] eqn:Hprogress;
       [|discriminate].
     injection Hrush as ->.
     assert (Hinv' : state_invariant s') by
@@ -1169,7 +1169,7 @@ Proof.
     assert (Hfalsified' : s'.(state_falsified) = []) by
       (now apply progress_falsified_empty with (s := s)).
     specialize (IH s' Hinv' Hfalsified' eq_refl).
-    destruct x as [m|explanation]; [|exact I].
+    destruct x as [m|cause]; [|exact I].
     rewrite <- (progress_clauses s s' Hprogress). exact IH.
 Qed.
 

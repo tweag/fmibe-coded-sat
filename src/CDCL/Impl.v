@@ -23,21 +23,11 @@ Variant Literal :=
   | Pos (l : Var)
   | Neg (l : Var)
 .
-Definition neg_lit (l : Literal) : Literal :=
-  match l with
-  | Pos v => Neg v
-  | Neg v => Pos v
-  end.
 
 Definition Clause := list Literal.
 Definition ClauseId := nat.
 
 Definition Problem := list Clause.
-
-(* A conjunction of literal. Used to represent conflicts and such *)
-Definition Conj := list Literal.
-
-Definition neg (c : Clause) : Conj := map neg_lit c.
 
 (* A partial model. The semantics is that `Pos` literals in the list are known
    to be true, `Neg` literals are known to be false. The rest is (yet)
@@ -187,7 +177,7 @@ Definition set_lit (l : Literal) (s : State) : State :=
 
 (* Game plan: to progress the state:
    - If there is a pending propagation, assign its literal using its clause as
-     the explanation.
+     the cause.
    - Otherwise
      1. choose an undecided variable
      2. Set it to `true` in the model
@@ -226,14 +216,14 @@ Definition progress_state (s : State) : State :=
 
 Variant progress_result :=
   | Progress (s : State)
-  | Conflict (explanation : Conj).
+  | Conflict (cause : Clause).
 
 Definition finish_progress (s : State) : progress_result :=
   match s.(state_falsified) with
   | [] => Progress s
   | ci :: _ =>
       match ClauseStore.find ci s.(state_clauses) with
-      | Some c => Conflict (neg c)
+      | Some c => Conflict c
       | None => Conflict []
       end
   end.
@@ -244,7 +234,7 @@ Definition progress (s : State) : progress_result :=
       match literal_value s.(state_model) l with
       | Some false =>
           match ClauseStore.find c s.(state_clauses) with
-          | Some clause => Conflict (neg clause)
+          | Some clause => Conflict clause
           | None => Conflict []
           end
       | _ => finish_progress (progress_state s)
@@ -278,13 +268,13 @@ Arguments Later {A}.
 
 (* Note: here's a termination metric, the lexicographically ordered
    `((number of watched literal - number of pending literal), number of pending literal)` *)
-CoFixpoint rush (s : State) : Delay (Model + Conj) :=
+CoFixpoint rush (s : State) : Delay (Model + Clause) :=
   (* TODO: add an is_empty predicate to ClauseMap directly *)
   if is_empty (ClauseMap.keys s.(state_watched)) then
     Now (inl s.(state_model))
   else
     match progress s with
     | Progress s' => Later (rush s')
-    | Conflict explanation => Now (inr explanation)
+    | Conflict cause => Now (inr cause)
     end.
     
