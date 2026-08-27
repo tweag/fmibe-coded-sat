@@ -2,3 +2,6 @@
  (name dimacs_parser_test)
  (modules dimacs_parser_test)
  (libraries fmibe_app))
+
+(cram
+ (deps ../app/solve.exe sat.cnf unsat.cnf))

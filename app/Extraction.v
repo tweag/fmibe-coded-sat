@@ -12,7 +12,7 @@ Extract Inductive Delay => "" [ "" "" ].
 Extract Inlined Constant delay_bind =>
   "(fun value continuation -> continuation value)".
 
-(* [sat] pulls in the solver state as well as [Literal], [Clause], and
-   [Problem].  In particular, OCaml clients and the DIMACS frontend share the
-   representation that originates in [CDCL.Impl]. *)
-Extraction "sat.ml" Clause Problem sat.
+(* [sat] and [add_clause] pull in the solver state as well as [Literal],
+   [Clause], and [Problem].  In particular, OCaml clients and the DIMACS
+   frontend share the representation that originates in [CDCL.Impl]. *)
+Extraction "sat.ml" Clause Problem add_clause sat.
