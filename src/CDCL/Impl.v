@@ -521,4 +521,27 @@ CoFixpoint rush (s : State) : Delay (State + (State * Clause)) :=
     | Progress s' => Later (rush s')
     | Conflict s' cause => Now (inr (s', cause))
     end.
-    
+
+CoFixpoint delay_bind {A B : Type} (d : Delay A) (k : A -> Delay B)
+    : Delay B :=
+  match d with
+  | Now x => k x
+  | Later d' => Later (delay_bind d' k)
+  end.
+
+Variant sat_result :=
+  | SAT (model : Model)
+  | UNSAT.
+
+#[bypass_check(guard)]
+CoFixpoint sat (s : State) : Delay sat_result :=
+  delay_bind (rush s)
+    (fun result =>
+      match result with
+      | inl final => Now (SAT final.(state_trail))
+      | inr conflict =>
+          match backtrack conflict with
+          | Some (Progress s') => Later (sat s')
+          | Some (Conflict _ _) | None => Now UNSAT
+          end
+      end).
