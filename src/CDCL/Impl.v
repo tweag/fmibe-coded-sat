@@ -93,6 +93,7 @@ Module ClauseStore := Map.Make VarKey ClauseValue.
 Record State := {
   state_trail : Trail;
   state_clauses : ClauseStore.t;
+  state_learned : ClauseStore.t;
   (* `state_watched` implements two-literal watch. *)
   state_watched : ClauseMap.t;
   state_falsified : list ClauseId;
@@ -179,16 +180,19 @@ Definition propagate (ci : ClauseId) (s : State) : State :=
     | propagate_literal l cm =>
       {| state_trail := s.(state_trail);
          state_clauses := s.(state_clauses);
+         state_learned := s.(state_learned);
          state_watched := cm;
          state_falsified := s.(state_falsified);
          state_pending := (l, ci) :: s.(state_pending) |}
     | clause_decided cm fals =>
       {| state_trail := s.(state_trail); state_clauses := s.(state_clauses);
+         state_learned := s.(state_learned);
          state_watched := cm;
          state_falsified := fals;
          state_pending := s.(state_pending) |}
     | clause_watched cm =>
       {| state_trail := s.(state_trail); state_clauses := s.(state_clauses);
+         state_learned := s.(state_learned);
          state_watched := cm;
          state_falsified := s.(state_falsified);
          state_pending := s.(state_pending) |}
@@ -201,6 +205,7 @@ Definition set_trail_entry (entry : TrailEntry) (s : State) : State :=
   let cm := ClauseMap.remove (literal_var l) s.(state_watched) in
   let s' := {| state_trail := entry :: s.(state_trail);
       state_clauses := s.(state_clauses); state_watched := cm;
+      state_learned := s.(state_learned);
       state_falsified := s.(state_falsified);
       state_pending := s.(state_pending) |} in
   fold_left (fun s c => propagate c s) watched s'.
@@ -226,12 +231,14 @@ Definition progress_state (s : State) : State :=
       | Some true =>
         {| state_trail := s.(state_trail);
            state_clauses := s.(state_clauses);
+           state_learned := s.(state_learned);
            state_watched := s.(state_watched);
            state_falsified := s.(state_falsified);
            state_pending := pending |}
       | Some false =>
         {| state_trail := s.(state_trail);
            state_clauses := s.(state_clauses);
+           state_learned := s.(state_learned);
            state_watched := s.(state_watched);
            state_falsified := s.(state_falsified);
            state_pending := pending |}
@@ -239,6 +246,7 @@ Definition progress_state (s : State) : State :=
         set_propagated_lit l c
           {| state_trail := s.(state_trail);
              state_clauses := s.(state_clauses);
+             state_learned := s.(state_learned);
              state_watched := s.(state_watched);
              state_falsified := s.(state_falsified);
              state_pending := pending |}
@@ -279,6 +287,7 @@ Definition add_clause (s : State) (c : Clause) : progress_result :=
   let base :=
     {| state_trail := s.(state_trail);
        state_clauses := clauses;
+       state_learned := s.(state_learned);
        state_watched := s.(state_watched);
        state_falsified := s.(state_falsified);
        state_pending := s.(state_pending) |} in
@@ -291,6 +300,7 @@ Definition add_clause (s : State) (c : Clause) : progress_result :=
         let conflict_state :=
           {| state_trail := s.(state_trail);
              state_clauses := clauses;
+             state_learned := s.(state_learned);
              state_watched := s.(state_watched);
              state_falsified := ci :: s.(state_falsified);
              state_pending := s.(state_pending) |} in
@@ -301,6 +311,7 @@ Definition add_clause (s : State) (c : Clause) : progress_result :=
             Progress
               {| state_trail := s.(state_trail);
                  state_clauses := clauses;
+                 state_learned := s.(state_learned);
                  state_watched :=
                    ClauseMap.add (literal_var l) ci s.(state_watched);
                  state_falsified := s.(state_falsified);
@@ -309,6 +320,7 @@ Definition add_clause (s : State) (c : Clause) : progress_result :=
             Progress
               {| state_trail := s.(state_trail);
                  state_clauses := clauses;
+                 state_learned := s.(state_learned);
                  state_watched :=
                    ClauseMap.add (literal_var l') ci
                      (ClauseMap.add (literal_var l) ci s.(state_watched));
