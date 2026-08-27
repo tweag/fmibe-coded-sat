@@ -27,17 +27,21 @@ Variant Literal :=
 Definition Clause := list Literal.
 Definition ClauseId := nat.
 
+Variant ClausePointer :=
+  | Source (c : ClauseId)
+  | Learned (c : ClauseId).
+
 Definition Problem := list Clause.
 
 (* A partial model. The semantics is that `Pos` literals in the list are known
    to be true, `Neg` literals are known to be false. The rest is (yet)
    undecided. *)
 Definition Model := list Literal.
-Definition Pending := list (Literal * ClauseId).
+Definition Pending := list (Literal * ClausePointer).
 
 Variant TrailEntry :=
   | Decision (l : Literal)
-  | Propagation (l : Literal) (cause : ClauseId).
+  | Propagation (l : Literal) (cause : ClausePointer).
 
 Definition Trail := list TrailEntry.
 
@@ -77,12 +81,17 @@ Module VarKey.
   Definition eq_dec := Nat.eq_dec.
 End VarKey.
 
-Module ClauseIdElement.
-  Definition t := ClauseId.
-  Definition eq_dec := Nat.eq_dec.
-End ClauseIdElement.
+Definition clause_pointer_eq_dec (l r : ClausePointer) : {l = r} + {l <> r}.
+Proof.
+  decide equality; apply Nat.eq_dec.
+Defined.
 
-Module ClauseMap := ListMap.Make VarKey ClauseIdElement.
+Module ClausePointerElement.
+  Definition t := ClausePointer.
+  Definition eq_dec := clause_pointer_eq_dec.
+End ClausePointerElement.
+
+Module ClauseMap := ListMap.Make VarKey ClausePointerElement.
 
 Module ClauseValue.
   Definition t := Clause.
@@ -96,9 +105,19 @@ Record State := {
   state_learned : ClauseStore.t;
   (* `state_watched` implements two-literal watch. *)
   state_watched : ClauseMap.t;
-  state_falsified : list ClauseId;
+  state_falsified : list ClausePointer;
   state_pending : Pending;
 }.
+
+Definition find_clause_in (clauses learned : ClauseStore.t)
+    (ci : ClausePointer) : option Clause :=
+  match ci with
+  | Source c => ClauseStore.find c clauses
+  | Learned c => ClauseStore.find c learned
+  end.
+
+Definition find_clause (ci : ClausePointer) (s : State) : option Clause :=
+  find_clause_in s.(state_clauses) s.(state_learned) ci.
 
 Definition literal_var (l : Literal) : Var :=
   match l with
@@ -137,7 +156,7 @@ Fixpoint scan_clause_once (m : Model) (c : Clause) : bool * list Literal :=
 
 Variant scan_result :=
   | propagate_literal (l : Literal) (cm : ClauseMap.t)
-  | clause_decided (cm : ClauseMap.t) (fals : list ClauseId)
+  | clause_decided (cm : ClauseMap.t) (fals : list ClausePointer)
   | clause_watched (cm : ClauseMap.t).
 
 Fixpoint find_different_var (v : Var) (ls : list Literal) : option Literal :=
@@ -148,8 +167,8 @@ Fixpoint find_different_var (v : Var) (ls : list Literal) : option Literal :=
   end.
 
 (* Is [c] satisfied? falsified? otherwise watch an additional literal *)
-Definition scan_clause (m : Model) (ci : ClauseId) (c : Clause)
-    (cm : ClauseMap.t) (fals : list ClauseId) : scan_result :=
+Definition scan_clause (m : Model) (ci : ClausePointer) (c : Clause)
+    (cm : ClauseMap.t) (fals : list ClausePointer) : scan_result :=
   let '(satisfied, undecided) := scan_clause_once m c in
   if satisfied then
       clause_decided cm fals
@@ -159,20 +178,22 @@ Definition scan_clause (m : Model) (ci : ClauseId) (c : Clause)
     | l :: undecided' =>
         match find_different_var (literal_var l) undecided' with
         | None =>
-            if in_dec Nat.eq_dec ci (ClauseMap.find (literal_var l) cm) then
+            if in_dec clause_pointer_eq_dec ci
+                (ClauseMap.find (literal_var l) cm) then
               propagate_literal l cm
             else
               propagate_literal l
                 (ClauseMap.add (literal_var l) ci cm)
         | Some l' =>
-            if in_dec Nat.eq_dec ci (ClauseMap.find (literal_var l) cm) then
+            if in_dec clause_pointer_eq_dec ci
+                (ClauseMap.find (literal_var l) cm) then
               clause_watched (ClauseMap.add (literal_var l') ci cm)
             else clause_watched (ClauseMap.add (literal_var l) ci cm)
         end
     end.
 
-Definition propagate (ci : ClauseId) (s : State) : State :=
-  match ClauseStore.find ci s.(state_clauses) with
+Definition propagate (ci : ClausePointer) (s : State) : State :=
+  match find_clause ci s with
   | None => s
   | Some c =>
     match scan_clause s.(state_trail) ci c s.(state_watched)
@@ -213,7 +234,7 @@ Definition set_trail_entry (entry : TrailEntry) (s : State) : State :=
 Definition set_lit (l : Literal) (s : State) : State :=
   set_trail_entry (Decision l) s.
 
-Definition set_propagated_lit (l : Literal) (cause : ClauseId) (s : State)
+Definition set_propagated_lit (l : Literal) (cause : ClausePointer) (s : State)
     : State :=
   set_trail_entry (Propagation l cause) s.
 
@@ -281,13 +302,37 @@ Definition analyze_conflict (s : State) (_conflict : Clause) : option Clause :=
 Definition fresh_clause_id (s : State) : ClauseId :=
   S (fold_right Nat.max 0 (ClauseStore.keys s.(state_clauses))).
 
-Definition add_clause (s : State) (c : Clause) : progress_result :=
-  let ci := fresh_clause_id s in
-  let clauses := ClauseStore.add ci c s.(state_clauses) in
+Definition fresh_learned_clause_id (s : State) : ClauseId :=
+  S (fold_right Nat.max 0 (ClauseStore.keys s.(state_learned))).
+
+Variant clause_destination := OriginalClause | LearnedClause.
+
+Definition add_clause_to (destination : clause_destination)
+    (s : State) (c : Clause) : progress_result :=
+  let ci :=
+    match destination with
+    | OriginalClause => fresh_clause_id s
+    | LearnedClause => fresh_learned_clause_id s
+    end in
+  let pointer :=
+    match destination with
+    | OriginalClause => Source ci
+    | LearnedClause => Learned ci
+    end in
+  let clauses :=
+    match destination with
+    | OriginalClause => ClauseStore.add ci c s.(state_clauses)
+    | LearnedClause => s.(state_clauses)
+    end in
+  let learned :=
+    match destination with
+    | OriginalClause => s.(state_learned)
+    | LearnedClause => ClauseStore.add ci c s.(state_learned)
+    end in
   let base :=
     {| state_trail := s.(state_trail);
        state_clauses := clauses;
-       state_learned := s.(state_learned);
+       state_learned := learned;
        state_watched := s.(state_watched);
        state_falsified := s.(state_falsified);
        state_pending := s.(state_pending) |} in
@@ -300,9 +345,9 @@ Definition add_clause (s : State) (c : Clause) : progress_result :=
         let conflict_state :=
           {| state_trail := s.(state_trail);
              state_clauses := clauses;
-             state_learned := s.(state_learned);
+             state_learned := learned;
              state_watched := s.(state_watched);
-             state_falsified := ci :: s.(state_falsified);
+             state_falsified := pointer :: s.(state_falsified);
              state_pending := s.(state_pending) |} in
         Conflict conflict_state c
     | l :: undecided' =>
@@ -311,29 +356,35 @@ Definition add_clause (s : State) (c : Clause) : progress_result :=
             Progress
               {| state_trail := s.(state_trail);
                  state_clauses := clauses;
-                 state_learned := s.(state_learned);
+                 state_learned := learned;
                  state_watched :=
-                   ClauseMap.add (literal_var l) ci s.(state_watched);
+                   ClauseMap.add (literal_var l) pointer s.(state_watched);
                  state_falsified := s.(state_falsified);
-                 state_pending := (l, ci) :: s.(state_pending) |}
+                 state_pending := (l, pointer) :: s.(state_pending) |}
         | Some l' =>
             Progress
               {| state_trail := s.(state_trail);
                  state_clauses := clauses;
-                 state_learned := s.(state_learned);
+                 state_learned := learned;
                  state_watched :=
-                   ClauseMap.add (literal_var l') ci
-                     (ClauseMap.add (literal_var l) ci s.(state_watched));
+                   ClauseMap.add (literal_var l') pointer
+                     (ClauseMap.add (literal_var l) pointer s.(state_watched));
                  state_falsified := s.(state_falsified);
                  state_pending := s.(state_pending) |}
         end
     end.
 
+Definition add_clause : State -> Clause -> progress_result :=
+  add_clause_to OriginalClause.
+
+Definition add_learned : State -> Clause -> progress_result :=
+  add_clause_to LearnedClause.
+
 Definition finish_progress (s : State) : progress_result :=
   match s.(state_falsified) with
   | [] => Progress s
   | ci :: _ =>
-      match ClauseStore.find ci s.(state_clauses) with
+      match find_clause ci s with
       | Some c => Conflict s c
       | None => Conflict s []
       end
@@ -344,7 +395,7 @@ Definition progress (s : State) : progress_result :=
   | (l, c) :: _ =>
       match literal_value s.(state_trail) l with
       | Some false =>
-          match ClauseStore.find c s.(state_clauses) with
+          match find_clause c s with
           | Some clause => Conflict s clause
           | None => Conflict s []
           end
