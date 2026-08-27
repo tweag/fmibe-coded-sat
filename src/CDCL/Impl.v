@@ -25,6 +25,11 @@ Variant Literal :=
   | Neg (l : Var)
 .
 
+Definition literal_var (l : Literal) : Var :=
+  match l with
+  | Pos v | Neg v => v
+  end.
+
 Definition Clause := list Literal.
 Definition ClauseId := Id.t.
 
@@ -97,7 +102,490 @@ Module ClausePointerElement.
   Definition eq_dec := clause_pointer_eq_dec.
 End ClausePointerElement.
 
-Module ClauseMap := ListMap.Make VarKey ClausePointerElement.
+Record WatchedClauses := {
+  pos : list ClausePointer;
+  neg : list ClausePointer;
+}.
+
+Module WatchedClausesMonoid <: Monoid.
+  Definition t := WatchedClauses.
+  Definition empty := {| pos := []; neg := [] |}.
+  Definition op (x y : t) :=
+    {| pos := x.(pos) ++ y.(pos); neg := x.(neg) ++ y.(neg) |}.
+  Lemma op_assoc : forall x y z, op x (op y z) = op (op x y) z.
+  Proof.
+    intros [xp xn] [yp yn] [zp zn]. unfold op. cbn. f_equal; apply app_assoc.
+  Qed.
+  Lemma op_empty_l : forall x, op empty x = x.
+  Proof. now intros [xp xn]. Qed.
+  Lemma op_empty_r : forall x, op x empty = x.
+  Proof. intros [xp xn]. unfold op, empty. cbn. now rewrite !app_nil_r. Qed.
+End WatchedClausesMonoid.
+
+Module ClauseMap.
+  Module Buckets := FiniteMap.RawMake VarKey WatchedClausesMonoid.
+  Definition t := Buckets.t.
+  Definition empty : t := Buckets.empty.
+
+  Definition find_pos (v : Var) (m : t) :=
+    (Buckets.find v m).(pos).
+  Definition find_neg (v : Var) (m : t) :=
+    (Buckets.find v m).(neg).
+  Definition find (v : Var) (m : t) := find_pos v m ++ find_neg v m.
+
+  Definition nonempty (w : WatchedClauses) : bool :=
+    match w.(pos), w.(neg) with
+    | [], [] => false
+    | _, _ => true
+    end.
+
+  Definition keys (m : t) : list Var :=
+    filter (fun v => nonempty (Buckets.find v m)) (Buckets.keys m).
+
+  Definition elements (m : t) : list ClausePointer :=
+    flat_map (fun v => find v m) (Buckets.keys m).
+
+  Definition card_of (ci : ClausePointer) (m : t) : nat :=
+    count_occ clause_pointer_eq_dec (elements m) ci.
+
+  Definition find_literal (l : Literal) (m : t) : list ClausePointer :=
+    match l with
+    | Pos v => find_pos v m
+    | Neg v => find_neg v m
+    end.
+
+  Definition singleton_watch (l : Literal) (ci : ClausePointer) :=
+    match l with
+    | Pos _ => {| pos := [ci]; neg := [] |}
+    | Neg _ => {| pos := []; neg := [ci] |}
+    end.
+
+  Definition add (l : Literal) (ci : ClausePointer) (m : t) : t :=
+    Buckets.add (literal_var l) (singleton_watch l ci) m.
+
+  Definition remove (v : Var) (m : t) : t := Buckets.remove v m.
+
+  Definition find_falsified (l : Literal) (m : t) : list ClausePointer :=
+    match l with
+    | Pos v => find_neg v m
+    | Neg v => find_pos v m
+    end.
+
+  Lemma find_falsified_in : forall l m ci,
+    In ci (find_falsified l m) -> In ci (find (literal_var l) m).
+  Proof.
+    intros [v|v] m ci Hin; unfold find, find_falsified; cbn;
+      [now apply in_or_app; right|now apply in_or_app; left].
+  Qed.
+
+  Lemma find_pos_empty : forall v, find_pos v empty = [].
+  Proof. reflexivity. Qed.
+  Lemma find_neg_empty : forall v, find_neg v empty = [].
+  Proof. reflexivity. Qed.
+
+  Lemma find_pos_add_pos : forall m ci v v',
+    find_pos v' (add (Pos v) ci m) =
+      if VarKey.eq_dec v v' then ci :: find_pos v' m else find_pos v' m.
+  Proof.
+    intros. unfold find_pos, add, Buckets.find, Buckets.add. cbn.
+    destruct (VarKey.eq_dec v v'); reflexivity.
+  Qed.
+  Lemma find_neg_add_pos : forall m ci v v',
+    find_neg v' (add (Pos v) ci m) = find_neg v' m.
+  Proof.
+    intros. unfold find_neg, add, Buckets.find, Buckets.add. cbn.
+    destruct (VarKey.eq_dec v v'); reflexivity.
+  Qed.
+  Lemma find_pos_add_neg : forall m ci v v',
+    find_pos v' (add (Neg v) ci m) = find_pos v' m.
+  Proof.
+    intros. unfold find_pos, add, Buckets.find, Buckets.add. cbn.
+    destruct (VarKey.eq_dec v v'); reflexivity.
+  Qed.
+  Lemma find_neg_add_neg : forall m ci v v',
+    find_neg v' (add (Neg v) ci m) =
+      if VarKey.eq_dec v v' then ci :: find_neg v' m else find_neg v' m.
+  Proof.
+    intros. unfold find_neg, add, Buckets.find, Buckets.add. cbn.
+    destruct (VarKey.eq_dec v v'); reflexivity.
+  Qed.
+
+  Lemma find_pos_add : forall m ci watched l v,
+    In watched (find_pos v m) -> In watched (find_pos v (add l ci m)).
+  Proof.
+    intros m ci watched [w|w] v Hin.
+    - rewrite find_pos_add_pos. destruct (VarKey.eq_dec w v); simpl; auto.
+    - now rewrite find_pos_add_neg.
+  Qed.
+  Lemma find_neg_add : forall m ci watched l v,
+    In watched (find_neg v m) -> In watched (find_neg v (add l ci m)).
+  Proof.
+    intros m ci watched [w|w] v Hin.
+    - now rewrite find_neg_add_pos.
+    - rewrite find_neg_add_neg. destruct (VarKey.eq_dec w v); simpl; auto.
+  Qed.
+
+  Lemma find_pos_add_old : forall m ci watched l v,
+    watched <> ci ->
+    In watched (find_pos v (add l ci m)) -> In watched (find_pos v m).
+  Proof.
+    intros m ci watched [w|w] v Hneq Hin.
+    - rewrite find_pos_add_pos in Hin. destruct (VarKey.eq_dec w v);
+        simpl in Hin; intuition congruence.
+    - now rewrite find_pos_add_neg in Hin.
+  Qed.
+  Lemma find_neg_add_old : forall m ci watched l v,
+    watched <> ci ->
+    In watched (find_neg v (add l ci m)) -> In watched (find_neg v m).
+  Proof.
+    intros m ci watched [w|w] v Hneq Hin.
+    - now rewrite find_neg_add_pos in Hin.
+    - rewrite find_neg_add_neg in Hin. destruct (VarKey.eq_dec w v);
+        simpl in Hin; intuition congruence.
+  Qed.
+
+  Lemma find_pos_add_other : forall m ci l v,
+    literal_var l <> v -> find_pos v (add l ci m) = find_pos v m.
+  Proof.
+    intros m ci [w|w] v Hneq; cbn [literal_var] in Hneq.
+    - rewrite find_pos_add_pos. destruct (VarKey.eq_dec w v); congruence.
+    - apply find_pos_add_neg.
+  Qed.
+  Lemma find_neg_add_other : forall m ci l v,
+    literal_var l <> v -> find_neg v (add l ci m) = find_neg v m.
+  Proof.
+    intros m ci [w|w] v Hneq; cbn [literal_var] in Hneq.
+    - apply find_neg_add_pos.
+    - rewrite find_neg_add_neg. destruct (VarKey.eq_dec w v); congruence.
+  Qed.
+
+  Lemma find_pos_add_existing : forall m ci watched l v,
+    ~ In ci (find (literal_var l) m) ->
+    In watched (find v m) ->
+    In watched (find_pos v (add l ci m)) -> In watched (find_pos v m).
+  Proof.
+    intros m ci watched l v Hfresh Hold Hnew.
+    destruct (clause_pointer_eq_dec watched ci) as [->|Hneq].
+    - rewrite find_pos_add_other in Hnew; [exact Hnew|].
+      intros Heq. subst v. contradiction.
+    - now apply find_pos_add_old in Hnew.
+  Qed.
+  Lemma find_neg_add_existing : forall m ci watched l v,
+    ~ In ci (find (literal_var l) m) ->
+    In watched (find v m) ->
+    In watched (find_neg v (add l ci m)) -> In watched (find_neg v m).
+  Proof.
+    intros m ci watched l v Hfresh Hold Hnew.
+    destruct (clause_pointer_eq_dec watched ci) as [->|Hneq].
+    - rewrite find_neg_add_other in Hnew; [exact Hnew|].
+      intros Heq. subst v. contradiction.
+    - now apply find_neg_add_old in Hnew.
+  Qed.
+
+  Lemma find_pos_add_nodup : forall m ci l v,
+    NoDup (find_pos v m) ->
+    ~ In ci (find (literal_var l) m) ->
+    NoDup (find_pos v (add l ci m)).
+  Proof.
+    intros m ci [w|w] v Hnodup Hfresh.
+    - rewrite find_pos_add_pos. destruct (VarKey.eq_dec w v) as [->|Hneq].
+      + constructor; [|exact Hnodup]. intros Hin. apply Hfresh.
+        unfold find. now apply in_or_app; left.
+      + exact Hnodup.
+    - now rewrite find_pos_add_neg.
+  Qed.
+
+  Lemma find_neg_add_nodup : forall m ci l v,
+    NoDup (find_neg v m) ->
+    ~ In ci (find (literal_var l) m) ->
+    NoDup (find_neg v (add l ci m)).
+  Proof.
+    intros m ci [w|w] v Hnodup Hfresh.
+    - now rewrite find_neg_add_pos.
+    - rewrite find_neg_add_neg. destruct (VarKey.eq_dec w v) as [->|Hneq].
+      + constructor; [|exact Hnodup]. intros Hin. apply Hfresh.
+        unfold find. now apply in_or_app; right.
+      + exact Hnodup.
+  Qed.
+
+  Lemma find_pos_remove : forall m v removed,
+    find_pos v (remove removed m) =
+      if VarKey.eq_dec removed v then [] else find_pos v m.
+  Proof.
+    intros. unfold find_pos, remove, Buckets.find, Buckets.remove. cbn.
+    destruct (VarKey.eq_dec removed v); reflexivity.
+  Qed.
+  Lemma find_neg_remove : forall m v removed,
+    find_neg v (remove removed m) =
+      if VarKey.eq_dec removed v then [] else find_neg v m.
+  Proof.
+    intros. unfold find_neg, remove, Buckets.find, Buckets.remove. cbn.
+    destruct (VarKey.eq_dec removed v); reflexivity.
+  Qed.
+
+  Lemma find_empty : forall v, find v empty = [].
+  Proof. reflexivity. Qed.
+  Lemma card_of_empty : forall ci, card_of ci empty = 0.
+  Proof. reflexivity. Qed.
+  Lemma keys_complete : forall m v, find v m <> [] <-> In v (keys m).
+  Proof.
+    intros m v. unfold keys, find, find_pos, find_neg.
+    rewrite filter_In. split.
+    - intros Hfind. split.
+      + apply Buckets.keys_complete. intros Hempty. rewrite Hempty in Hfind.
+        contradiction.
+      + destruct (Buckets.find v m) as [p n]. cbn in *.
+        destruct p, n; try reflexivity; contradiction.
+    - intros [_ Hnonempty]. destruct (Buckets.find v m) as [p n]. cbn in *.
+      destruct p, n; discriminate.
+  Qed.
+  Lemma find_add : forall m x y l v,
+    In y (find v (add l x m)) <->
+    (v = literal_var l /\ y = x) \/ In y (find v m).
+  Proof.
+    intros m x y [w|w] v; unfold find.
+    - rewrite find_pos_add_pos, find_neg_add_pos.
+      destruct (VarKey.eq_dec w v) as [->|Hneq]; simpl;
+        rewrite ?in_app_iff; firstorder congruence.
+    - rewrite find_pos_add_neg, find_neg_add_neg.
+      destruct (VarKey.eq_dec w v) as [->|Hneq]; simpl;
+        rewrite ?in_app_iff; firstorder congruence.
+  Qed.
+
+  Lemma count_occ_find_add : forall m x y l v,
+    count_occ clause_pointer_eq_dec (find v (add l x m)) y =
+      if VarKey.eq_dec (literal_var l) v then
+        count_occ clause_pointer_eq_dec [x] y +
+          count_occ clause_pointer_eq_dec (find v m) y
+      else count_occ clause_pointer_eq_dec (find v m) y.
+  Proof.
+    intros m x y [w|w] v; unfold find.
+    - rewrite find_pos_add_pos, find_neg_add_pos.
+      destruct (VarKey.eq_dec w v) eqn:Hwv.
+      + simpl. rewrite Hwv. rewrite !count_occ_app. simpl.
+        destruct (clause_pointer_eq_dec x y); simpl; reflexivity.
+      + simpl. now rewrite Hwv.
+    - rewrite find_pos_add_neg, find_neg_add_neg.
+      destruct (VarKey.eq_dec w v) eqn:Hwv.
+      + simpl. rewrite Hwv. rewrite !count_occ_app. simpl.
+        destruct (clause_pointer_eq_dec x y); simpl; lia.
+      + simpl. now rewrite Hwv.
+  Qed.
+
+  Lemma count_occ_flat_map_add_absent : forall ks m l x y,
+    ~ In (literal_var l) ks ->
+    count_occ clause_pointer_eq_dec
+      (flat_map (fun v => find v (add l x m)) ks) y =
+    count_occ clause_pointer_eq_dec (flat_map (fun v => find v m) ks) y.
+  Proof.
+    intros ks. induction ks as [|v ks IH]; intros m l x y Hnotin; simpl.
+    - reflexivity.
+    - rewrite !count_occ_app, count_occ_find_add.
+      destruct (VarKey.eq_dec (literal_var l) v) as [Heq|Hneq].
+      + exfalso. apply Hnotin. now left.
+      + rewrite IH; [reflexivity|]. intros Hin. apply Hnotin. now right.
+  Qed.
+
+  Lemma count_occ_flat_map_add_present : forall ks m l x y,
+    NoDup ks -> In (literal_var l) ks ->
+    count_occ clause_pointer_eq_dec
+      (flat_map (fun v => find v (add l x m)) ks) y =
+    count_occ clause_pointer_eq_dec [x] y +
+      count_occ clause_pointer_eq_dec (flat_map (fun v => find v m) ks) y.
+  Proof.
+    intros ks. induction ks as [|v ks IH]; intros m l x y Hnodup Hin;
+      [contradiction|].
+    inversion Hnodup as [|? ? Hnotin Hnodup']; subst.
+    cbn [flat_map]. rewrite !count_occ_app, count_occ_find_add.
+    destruct (VarKey.eq_dec (literal_var l) v) as [Heq|Hneq].
+    - subst v. rewrite count_occ_flat_map_add_absent by exact Hnotin. lia.
+    - rewrite IH; [lia|exact Hnodup'|].
+      destruct Hin as [Heq|Hin]; [congruence|exact Hin].
+  Qed.
+
+  Lemma card_of_add : forall m x l,
+    card_of x (add l x m) = S (card_of x m).
+  Proof.
+    intros m x l. unfold card_of, elements.
+    assert (Hkeys : Buckets.keys (add l x m) =
+      if in_dec VarKey.eq_dec (literal_var l) (Buckets.keys m)
+      then Buckets.keys m else literal_var l :: Buckets.keys m) by reflexivity.
+    rewrite Hkeys.
+    destruct (in_dec VarKey.eq_dec (literal_var l) (Buckets.keys m))
+      as [Hin|Hnotin] eqn:Hmem.
+    - rewrite count_occ_flat_map_add_present;
+        [|exact (proj1 (Buckets.support_spec m))|exact Hin].
+      simpl. destruct (clause_pointer_eq_dec x x); [lia|contradiction].
+    - cbn [flat_map]. rewrite count_occ_app, count_occ_find_add.
+      destruct (VarKey.eq_dec (literal_var l) (literal_var l));
+        [|contradiction].
+      rewrite count_occ_flat_map_add_absent by exact Hnotin.
+      assert (Hempty : find (literal_var l) m = []).
+      { unfold find, find_pos, find_neg, Buckets.find.
+        rewrite (Buckets.lookup_notin_support m (literal_var l) Hnotin).
+        reflexivity. }
+      rewrite Hempty. simpl. destruct (clause_pointer_eq_dec x x);
+        [lia|contradiction].
+  Qed.
+  Lemma card_of_add_neq : forall m x y l,
+    x <> y -> card_of y (add l x m) = card_of y m.
+  Proof.
+    intros m x y l Hneq. unfold card_of, elements.
+    assert (Hkeys : Buckets.keys (add l x m) =
+      if in_dec VarKey.eq_dec (literal_var l) (Buckets.keys m)
+      then Buckets.keys m else literal_var l :: Buckets.keys m) by reflexivity.
+    rewrite Hkeys.
+    destruct (in_dec VarKey.eq_dec (literal_var l) (Buckets.keys m))
+      as [Hin|Hnotin] eqn:Hmem.
+    - rewrite count_occ_flat_map_add_present;
+        [|exact (proj1 (Buckets.support_spec m))|exact Hin].
+      simpl. destruct (clause_pointer_eq_dec x y); [contradiction|lia].
+    - cbn [flat_map]. rewrite count_occ_app, count_occ_find_add.
+      destruct (VarKey.eq_dec (literal_var l) (literal_var l));
+        [|contradiction].
+      rewrite count_occ_flat_map_add_absent by exact Hnotin.
+      assert (Hempty : find (literal_var l) m = []).
+      { unfold find, find_pos, find_neg, Buckets.find.
+        rewrite (Buckets.lookup_notin_support m (literal_var l) Hnotin).
+        reflexivity. }
+      rewrite Hempty. simpl. destruct (clause_pointer_eq_dec x y);
+        [contradiction|lia].
+  Qed.
+
+  Lemma filter_remove_absent : forall ks v,
+    ~ In v ks ->
+    filter (fun v' => if VarKey.eq_dec v v' then false else true) ks = ks.
+  Proof.
+    intros ks. induction ks as [|v' ks IH]; intros v Hnotin; simpl.
+    - reflexivity.
+    - destruct (VarKey.eq_dec v v') as [->|Hneq].
+      + exfalso. apply Hnotin. now left.
+      + simpl. f_equal. apply IH. intros Hin. apply Hnotin. now right.
+  Qed.
+
+  Lemma flat_map_remove_absent : forall ks m v,
+    ~ In v ks ->
+    flat_map (fun v' => if VarKey.eq_dec v v' then [] else find v' m) ks =
+      flat_map (fun v' => find v' m) ks.
+  Proof.
+    intros ks. induction ks as [|v' ks IH]; intros m v Hnotin; simpl.
+    - reflexivity.
+    - destruct (VarKey.eq_dec v v') as [->|Hneq].
+      + exfalso. apply Hnotin. now left.
+      + f_equal. apply IH. intros Hin. apply Hnotin. now right.
+  Qed.
+
+  Lemma card_of_remove : forall m x v,
+    card_of x (remove v m) + count_occ clause_pointer_eq_dec (find v m) x =
+    card_of x m.
+  Proof.
+    intros m x v. unfold card_of, elements.
+    assert (Hkeys : Buckets.keys (remove v m) =
+      filter (fun v' => if VarKey.eq_dec v v' then false else true)
+        (Buckets.keys m)) by reflexivity.
+    rewrite Hkeys.
+    assert (Hflat : forall ks,
+      flat_map (fun v' => find v' (remove v m)) ks =
+      flat_map (fun v' => if VarKey.eq_dec v v' then [] else find v' m) ks).
+    { intros ks. induction ks as [|v' ks IH]; [reflexivity|]. simpl.
+      rewrite IH. unfold find. rewrite find_pos_remove, find_neg_remove.
+      destruct (VarKey.eq_dec v v'); reflexivity. }
+    rewrite Hflat. unfold Buckets.keys.
+    destruct (in_dec VarKey.eq_dec v (Buckets.support m)) as [Hin|Hnotin].
+    - apply in_split in Hin as [before [after Hsupport]].
+      pose proof (proj1 (Buckets.support_spec m)) as Hnodup.
+      rewrite Hsupport in Hnodup |- *.
+      rewrite filter_app. simpl.
+      destruct (VarKey.eq_dec v v) as [_|Habs]; [|contradiction]. simpl.
+      pose proof (NoDup_remove_2 _ _ _ Hnodup) as Hnotin_rest.
+      assert (~ In v before) as Hnotin_before.
+      { intros H. apply Hnotin_rest. apply in_or_app. now left. }
+      assert (~ In v after) as Hnotin_after.
+      { intros H. apply Hnotin_rest. apply in_or_app. now right. }
+      rewrite (filter_remove_absent before v Hnotin_before).
+      rewrite (filter_remove_absent after v Hnotin_after).
+      rewrite !flat_map_app.
+      erewrite flat_map_remove_absent by exact Hnotin_before.
+      erewrite flat_map_remove_absent by exact Hnotin_after.
+      cbn [flat_map]. rewrite !count_occ_app.
+      set (nb := count_occ clause_pointer_eq_dec
+        (flat_map (fun v => find v m) before) x).
+      set (nv := count_occ clause_pointer_eq_dec (find v m) x).
+      set (na := count_occ clause_pointer_eq_dec
+        (flat_map (fun v => find v m) after) x).
+      change (nb + na + nv = nb + (nv + na)). lia.
+    - rewrite (filter_remove_absent (Buckets.support m) v Hnotin).
+      erewrite flat_map_remove_absent by exact Hnotin.
+      assert (Hempty : find v m = []).
+      { unfold find, find_pos, find_neg, Buckets.find.
+        rewrite (Buckets.lookup_notin_support m v Hnotin). reflexivity. }
+      rewrite Hempty. simpl. lia.
+  Qed.
+  Lemma card_of_unique : forall m x v v',
+    card_of x m = 1 -> In x (find v m) -> In x (find v' m) -> v = v'.
+  Proof.
+    intros m x v v' Hcard Hv Hv'. destruct (VarKey.eq_dec v v') as [->|Hneq];
+      [reflexivity|exfalso].
+    assert (In v (Buckets.keys m)) as Hvs.
+    { apply Buckets.keys_complete. intros Hempty. unfold find, find_pos, find_neg in Hv.
+      rewrite Hempty in Hv. contradiction. }
+    assert (In v' (Buckets.keys m)) as Hvs'.
+    { apply Buckets.keys_complete. intros Hempty. unfold find, find_pos, find_neg in Hv'.
+      rewrite Hempty in Hv'. contradiction. }
+    apply in_split in Hvs as [before [after Hsupport]].
+    assert (In v' (before ++ after)) as Hv'rest.
+    { rewrite Hsupport in Hvs'. apply in_app_or in Hvs' as [Hin|Hin].
+      - now apply in_or_app; left.
+      - simpl in Hin. destruct Hin as [Heq|Hin]; [congruence|].
+        now apply in_or_app; right. }
+    assert (In x (flat_map (fun v => find v m) (before ++ after))) as Hrest.
+    { apply in_flat_map. exists v'. split; assumption. }
+    apply (proj1 (count_occ_In clause_pointer_eq_dec _ _)) in Hv.
+    apply (proj1 (count_occ_In clause_pointer_eq_dec _ _)) in Hrest.
+    unfold card_of, elements in Hcard. rewrite Hsupport, flat_map_app in Hcard.
+    cbn [flat_map] in Hcard. rewrite !count_occ_app in Hcard.
+    rewrite flat_map_app, count_occ_app in Hrest. lia.
+  Qed.
+  Lemma card_of_in : forall m x v, In x (find v m) -> card_of x m > 0.
+  Proof.
+    intros m x v Hin. unfold card_of. apply count_occ_In.
+    apply in_flat_map. exists v. split; [|exact Hin].
+    apply Buckets.keys_complete. intros Hempty.
+    unfold find, find_pos, find_neg in Hin. rewrite Hempty in Hin. contradiction.
+  Qed.
+  Lemma card_of_pos : forall m x,
+    card_of x m > 0 -> exists v, In x (find v m).
+  Proof.
+    intros m x Hpos. apply (proj2 (count_occ_In clause_pointer_eq_dec _ _))
+      in Hpos. unfold elements in Hpos. apply in_flat_map in Hpos as [v [_ Hin]].
+    now exists v.
+  Qed.
+  Lemma find_remove_eq : forall m v removed,
+    find v (remove removed m) =
+      if VarKey.eq_dec removed v then [] else find v m.
+  Proof.
+    intros. unfold find. rewrite find_pos_remove, find_neg_remove.
+    destruct (VarKey.eq_dec removed v); reflexivity.
+  Qed.
+  Lemma find_remove : forall m v x removed,
+    In x (find v (remove removed m)) <->
+    In x (find v m) /\ v <> removed.
+  Proof.
+    intros. rewrite find_remove_eq. destruct (VarKey.eq_dec removed v) as [->|Hneq];
+      simpl; firstorder congruence.
+  Qed.
+  Lemma elements_spec : forall m x,
+    In x (elements m) <-> exists v, In v (keys m) /\ In x (find v m).
+  Proof.
+    intros m x. unfold elements. rewrite in_flat_map. split.
+    - intros [v [Hsupport Hin]]. exists v. split; [|exact Hin].
+      apply keys_complete. intros Hempty. rewrite Hempty in Hin. contradiction.
+    - intros [v [Hkey Hin]]. exists v. split; [|exact Hin].
+      apply Buckets.keys_complete. intros Hempty.
+      unfold find, find_pos, find_neg in Hin. rewrite Hempty in Hin.
+      contradiction.
+  Qed.
+End ClauseMap.
 
 Module ClauseValue.
   Definition t := Clause.
@@ -124,11 +612,6 @@ Definition find_clause_in (clauses learned : ClauseStore.t)
 
 Definition find_clause (ci : ClausePointer) (s : State) : option Clause :=
   find_clause_in s.(state_clauses) s.(state_learned) ci.
-
-Definition literal_var (l : Literal) : Var :=
-  match l with
-  | Pos v | Neg v => v
-  end.
 
 Definition var_is_assigned (m : Model) (v : Var) : bool :=
   existsb (fun l => Id.eqb (literal_var l) v) m.
@@ -189,12 +672,12 @@ Definition scan_clause (m : Model) (ci : ClausePointer) (c : Clause)
               propagate_literal l cm
             else
               propagate_literal l
-                (ClauseMap.add (literal_var l) ci cm)
+                (ClauseMap.add l ci cm)
         | Some l' =>
             if in_dec clause_pointer_eq_dec ci
                 (ClauseMap.find (literal_var l) cm) then
-              clause_watched (ClauseMap.add (literal_var l') ci cm)
-            else clause_watched (ClauseMap.add (literal_var l) ci cm)
+              clause_watched (ClauseMap.add l' ci cm)
+            else clause_watched (ClauseMap.add l ci cm)
         end
     end.
 
@@ -228,7 +711,7 @@ Definition propagate (ci : ClausePointer) (s : State) : State :=
 
 Definition set_trail_entry (entry : TrailEntry) (s : State) : State :=
   let l := trail_literal entry in
-  let watched := ClauseMap.find (literal_var l) s.(state_watched) in
+  let watched := ClauseMap.find_falsified l s.(state_watched) in
   let cm := ClauseMap.remove (literal_var l) s.(state_watched) in
   let s' := {| state_trail := entry :: s.(state_trail);
       state_clauses := s.(state_clauses); state_watched := cm;
@@ -351,7 +834,7 @@ Definition index_clause (pointer : ClausePointer) (s : State) (c : Clause)
                  state_clauses := s.(state_clauses);
                  state_learned := s.(state_learned);
                  state_watched :=
-                   ClauseMap.add (literal_var l) pointer s.(state_watched);
+                   ClauseMap.add l pointer s.(state_watched);
                  state_falsified := s.(state_falsified);
                  state_pending := (l, pointer) :: s.(state_pending) |}
         | Some l' =>
@@ -360,8 +843,8 @@ Definition index_clause (pointer : ClausePointer) (s : State) (c : Clause)
                  state_clauses := s.(state_clauses);
                  state_learned := s.(state_learned);
                  state_watched :=
-                   ClauseMap.add (literal_var l') pointer
-                     (ClauseMap.add (literal_var l) pointer s.(state_watched));
+                   ClauseMap.add l' pointer
+                     (ClauseMap.add l pointer s.(state_watched));
                  state_falsified := s.(state_falsified);
                  state_pending := s.(state_pending) |}
         end
@@ -418,7 +901,7 @@ Definition add_clause_to (destination : clause_destination)
                  state_clauses := clauses;
                  state_learned := learned;
                  state_watched :=
-                   ClauseMap.add (literal_var l) pointer s.(state_watched);
+                   ClauseMap.add l pointer s.(state_watched);
                  state_falsified := s.(state_falsified);
                  state_pending := (l, pointer) :: s.(state_pending) |}
         | Some l' =>
@@ -427,8 +910,8 @@ Definition add_clause_to (destination : clause_destination)
                  state_clauses := clauses;
                  state_learned := learned;
                  state_watched :=
-                   ClauseMap.add (literal_var l') pointer
-                     (ClauseMap.add (literal_var l) pointer s.(state_watched));
+                   ClauseMap.add l' pointer
+                     (ClauseMap.add l pointer s.(state_watched));
                  state_falsified := s.(state_falsified);
                  state_pending := s.(state_pending) |}
         end

@@ -345,8 +345,12 @@ Definition staged_invariant (work : list ClausePointer) (s : State) : Prop :=
   (forall v ci, In ci (ClauseMap.find v s.(state_watched)) ->
      exists c, find_clause ci s = Some c /\
        ~ InL v (trail_model s.(state_trail)) /\ InL v c /\
-       ~ has_opposite_literals c)
-  /\ (forall v, NoDup (ClauseMap.find v s.(state_watched)))
+       ~ has_opposite_literals c /\
+       (In ci (ClauseMap.find_pos v s.(state_watched)) -> In (Pos v) c) /\
+       (In ci (ClauseMap.find_neg v s.(state_watched)) -> In (Neg v) c))
+  /\ (forall v,
+       NoDup (ClauseMap.find_pos v s.(state_watched)) /\
+       NoDup (ClauseMap.find_neg v s.(state_watched)))
   /\ NoDup work
   /\ (forall ci, In ci work ->
      exists c, find_clause ci s = Some c /\
@@ -377,6 +381,20 @@ Definition learned_invariant (s : State) : Prop :=
 Definition state_invariant (s : State) : Prop :=
   staged_invariant [] s /\ learned_invariant s.
 
+Lemma watched_find_nodup : forall work s v,
+  staged_invariant work s -> NoDup (ClauseMap.find v s.(state_watched)).
+Proof.
+  intros work s v Hinv. destruct Hinv as
+    [_ [_ [Hwatch [Hnodup _]]]].
+  unfold ClauseMap.find. apply NoDup_app. repeat split.
+  - apply Hnodup.
+  - apply Hnodup.
+  - intros ci Hpos Hneg.
+    destruct (Hwatch v ci (in_or_app _ _ _ (or_introl Hpos))) as
+      [c [_ [_ [_ [Hnoopp [Hpossem Hnegsem]]]]]].
+    apply Hnoopp. exists v. split; [now apply Hpossem|now apply Hnegsem].
+Qed.
+
 Definition backtrack_invariant (s : State) : Prop :=
   trail_invariant s.(state_clauses) s.(state_learned) s.(state_trail) /\
   learned_invariant s.
@@ -406,8 +424,12 @@ Definition rebuild_invariant (remaining : list ClausePointer) (s : State) : Prop
   /\ (forall v ci, In ci (ClauseMap.find v s.(state_watched)) ->
      exists c, find_clause ci s = Some c /\
        ~ InL v (trail_model s.(state_trail)) /\ InL v c /\
-       ~ has_opposite_literals c)
-  /\ (forall v, NoDup (ClauseMap.find v s.(state_watched)))
+       ~ has_opposite_literals c /\
+       (In ci (ClauseMap.find_pos v s.(state_watched)) -> In (Pos v) c) /\
+       (In ci (ClauseMap.find_neg v s.(state_watched)) -> In (Neg v) c))
+  /\ (forall v,
+       NoDup (ClauseMap.find_pos v s.(state_watched)) /\
+       NoDup (ClauseMap.find_neg v s.(state_watched)))
   /\ NoDup remaining
   /\ (forall ci, In ci remaining -> exists c, find_clause ci s = Some c)
   /\ (forall l ci, In (l, ci) s.(state_pending) ->
@@ -481,7 +503,8 @@ Proof.
       congruence.
   - intros ci H. contradiction.
   - intros v ci H. rewrite ClauseMap.find_empty in H. contradiction.
-  - intros v. rewrite ClauseMap.find_empty. constructor.
+  - rewrite ClauseMap.find_pos_empty. constructor.
+  - rewrite ClauseMap.find_neg_empty. constructor.
   - apply all_clause_pointers_nodup.
   - intros [ci|ci] Hin; unfold all_clause_pointers in Hin.
     + apply in_app_or in Hin. destruct Hin as [Hin|Hin].
@@ -522,7 +545,8 @@ Proof.
       [now left|contradiction|now right; right].
   - exact Hfals.
   - exact Hwatch.
-  - exact Hnodup.
+  - apply Hnodup.
+  - apply Hnodup.
   - constructor.
   - intros ci H. contradiction.
   - exact Hpending.
@@ -577,7 +601,9 @@ Proof.
       * split.
         -- intros v ci H. rewrite ClauseMap.find_empty in H. contradiction.
         -- split.
-           ++ intros v. rewrite ClauseMap.find_empty. constructor.
+           ++ intros v. split;
+                [rewrite ClauseMap.find_pos_empty|rewrite ClauseMap.find_neg_empty];
+                constructor.
            ++ split; [constructor|]. split.
               ** intros ci H. contradiction.
               ** split.
@@ -1047,6 +1073,8 @@ Proof.
   - intros v d Hd. destruct (Hwatch v d Hd) as [body [Hfind Hrest]].
     exists body. split;
       [now apply find_clause_after_original_add_state|exact Hrest].
+  - apply Hnodup.
+  - apply Hnodup.
   - intros d Hd. destruct (Hworkref d Hd) as [body [Hfind Hnoopp]].
     exists body. split;
       [now apply find_clause_after_original_add_state|exact Hnoopp].
@@ -1115,6 +1143,8 @@ Proof.
   - intros v d Hd. destruct (Hwatch v d Hd) as [body [Hfind Hrest]].
     exists body. split;
       [now apply find_clause_after_learned_add_state|exact Hrest].
+  - apply Hnodup.
+  - apply Hnodup.
   - intros d Hd. destruct (Hworkref d Hd) as [body [Hfind Hnoopp]].
     exists body. split;
       [now apply find_clause_after_learned_add_state|exact Hnoopp].
@@ -1180,7 +1210,7 @@ Lemma scan_clause_inl_spec : forall m ci c cm fals l,
   existsb (literal_is_true m) c = false /\
   In l c /\ literal_is_undecided m l = true /\
   cm' = (if in_dec clause_pointer_eq_dec ci (ClauseMap.find (literal_var l) cm)
-    then cm else ClauseMap.add (literal_var l) ci cm).
+    then cm else ClauseMap.add l ci cm).
 Proof.
   intros m ci c cm fals l cm' Hscan. unfold scan_clause in Hscan.
   rewrite scan_clause_once_spec in Hscan.
@@ -1214,8 +1244,8 @@ Lemma scan_clause_watched_spec : forall m ci c cm fals cm',
     literal_is_undecided m l' = true /\
     literal_var l <> literal_var l' /\
     cm' = (if in_dec clause_pointer_eq_dec ci (ClauseMap.find (literal_var l) cm)
-      then ClauseMap.add (literal_var l') ci cm
-      else ClauseMap.add (literal_var l) ci cm).
+      then ClauseMap.add l' ci cm
+      else ClauseMap.add l ci cm).
 Proof.
   intros m ci c cm fals cm' Hscan. unfold scan_clause in Hscan.
   rewrite scan_clause_once_spec in Hscan.
@@ -1333,7 +1363,8 @@ Proof.
       right. left. destruct Hin as [Heq|Hin]; [subst ci; contradiction|exact Hin].
   - exact Hfals.
   - exact Hwatch.
-  - exact Hnodup.
+  - apply Hnodup.
+  - apply Hnodup.
   - exact Hnoduptail.
   - intros ci Hin. apply Hrefs. now right.
   - exact Hpending.
@@ -1360,7 +1391,7 @@ Lemma rebuild_add_unit : forall pointer remaining s c l,
     {| state_trail := s.(state_trail);
        state_clauses := s.(state_clauses);
        state_learned := s.(state_learned);
-       state_watched := ClauseMap.add (literal_var l) pointer s.(state_watched);
+       state_watched := ClauseMap.add l pointer s.(state_watched);
        state_falsified := s.(state_falsified);
        state_pending := (l, pointer) :: s.(state_pending) |}.
 Proof.
@@ -1373,9 +1404,9 @@ Proof.
   pose proof (Hcard pointer) as Hpointercard.
   destruct Hpointercard as [[_ Hzero]|[Habs _]];
     [|exfalso; apply Habs; now left].
-  assert (~ In pointer (ClauseMap.find (literal_var l) s.(state_watched)))
+  assert (forall v, ~ In pointer (ClauseMap.find v s.(state_watched)))
     as Hfresh.
-  { intros Hin. apply ClauseMap.card_of_in in Hin. lia. }
+  { intros v Hin. apply ClauseMap.card_of_in in Hin. lia. }
   cbn [state_trail state_clauses state_learned state_watched
     state_falsified state_pending].
   repeat split.
@@ -1394,11 +1425,37 @@ Proof.
     + exists c. repeat split; try assumption.
       * now apply literal_undecided_not_InL.
       * now apply literal_InL, Hneeds.
-    + exact (Hwatch v ci Hin).
-  - intros v. rewrite ClauseMap.find_add_eq.
-    destruct (VarKey.eq_dec (literal_var l) v) as [Heq|Hneq].
-    + subst v. now constructor.
-    + apply Hnodup.
+      * destruct l as [w|w]; cbn; intros Hbucket.
+        -- exact (proj1 Hneeds).
+        -- exfalso. apply (Hfresh (literal_var (Neg w))). unfold ClauseMap.find.
+           apply in_or_app. left. now rewrite ClauseMap.find_pos_add_neg in Hbucket.
+      * destruct l as [w|w]; cbn; intros Hbucket.
+        -- exfalso. apply (Hfresh (literal_var (Pos w))). unfold ClauseMap.find.
+           apply in_or_app. right. now rewrite ClauseMap.find_neg_add_pos in Hbucket.
+        -- exact (proj1 Hneeds).
+    + destruct (Hwatch v ci Hin) as
+        [body [Hbody [Hnotin' [Hinc [Hnoopp' Hpolarity]]]]].
+      exists body. repeat split; try assumption.
+      * destruct Hpolarity as [Hpossem _]. intros Hbucket. apply Hpossem.
+        eapply ClauseMap.find_pos_add_old; [|exact Hbucket].
+        intros ->. exact (Hfresh v Hin).
+      * destruct Hpolarity as [_ Hnegsem]. intros Hbucket. apply Hnegsem.
+        eapply ClauseMap.find_neg_add_old; [|exact Hbucket].
+        intros ->. exact (Hfresh v Hin).
+  - destruct l as [w|w].
+    + rewrite ClauseMap.find_pos_add_pos.
+      destruct (VarKey.eq_dec w v) as [->|Hneq].
+      * constructor; [|apply Hnodup]. intros Hin. apply (Hfresh v).
+        unfold ClauseMap.find. now apply in_or_app; left.
+      * apply Hnodup.
+    + rewrite ClauseMap.find_pos_add_neg. apply Hnodup.
+  - destruct l as [w|w].
+    + rewrite ClauseMap.find_neg_add_pos. apply Hnodup.
+    + rewrite ClauseMap.find_neg_add_neg.
+      destruct (VarKey.eq_dec w v) as [->|Hneq].
+      * constructor; [|apply Hnodup]. intros Hin. apply (Hfresh v).
+        unfold ClauseMap.find. now apply in_or_app; right.
+      * apply Hnodup.
   - exact Hnoduptail.
   - intros ci Hin. apply Hrefs. now right.
   - intros p ci Hin. destruct Hin as [Heq|Hin].
@@ -1438,8 +1495,8 @@ Lemma rebuild_add_two : forall pointer remaining s c l l',
     {| state_trail := s.(state_trail);
        state_clauses := s.(state_clauses);
        state_learned := s.(state_learned);
-       state_watched := ClauseMap.add (literal_var l') pointer
-         (ClauseMap.add (literal_var l) pointer s.(state_watched));
+       state_watched := ClauseMap.add l' pointer
+         (ClauseMap.add l pointer s.(state_watched));
        state_falsified := s.(state_falsified);
        state_pending := s.(state_pending) |}.
 Proof.
@@ -1456,6 +1513,11 @@ Proof.
   assert (forall v, ~ In pointer (ClauseMap.find v s.(state_watched)))
     as Hfresh.
   { intros v Hin. apply ClauseMap.card_of_in in Hin. lia. }
+  assert (~ In pointer (ClauseMap.find (literal_var l')
+      (ClauseMap.add l pointer s.(state_watched)))) as Hfresh'.
+  { intros Hin. apply ClauseMap.find_add in Hin as [[Heq _]|Hin].
+    - apply Hvars. symmetry. exact Heq.
+    - exact (Hfresh (literal_var l') Hin). }
   cbn [state_trail state_clauses state_learned state_watched
     state_falsified state_pending].
   repeat split.
@@ -1474,24 +1536,51 @@ Proof.
     + exists c. repeat split; try assumption.
       * now apply literal_undecided_not_InL.
       * now apply literal_InL.
+      * destruct l' as [w|w]; cbn; intros Hbucket.
+        -- exact Hl'c.
+        -- exfalso. apply Hfresh'. unfold ClauseMap.find.
+           apply in_or_app. left. now rewrite ClauseMap.find_pos_add_neg in Hbucket.
+      * destruct l' as [w|w]; cbn; intros Hbucket.
+        -- exfalso. apply Hfresh'. unfold ClauseMap.find.
+           apply in_or_app. right. now rewrite ClauseMap.find_neg_add_pos in Hbucket.
+        -- exact Hl'c.
     + apply ClauseMap.find_add in Hin as [[-> ->]|Hin].
       * exists c. repeat split; try assumption.
         -- now apply literal_undecided_not_InL.
         -- now apply literal_InL.
-      * exact (Hwatch v ci Hin).
-  - intros v. rewrite ClauseMap.find_add_eq.
-    destruct (VarKey.eq_dec (literal_var l') v) as [Heq'|Hneq'].
-    + subst v. constructor.
-      * intros Hin. apply ClauseMap.find_add in Hin as [[Heq _]|Hin].
-        -- apply Hvars. symmetry. exact Heq.
-        -- exact (Hfresh (literal_var l') Hin).
-      * rewrite ClauseMap.find_add_eq.
-        destruct (VarKey.eq_dec (literal_var l) (literal_var l'));
-          [contradiction|apply Hnodup].
-    + rewrite ClauseMap.find_add_eq.
-      destruct (VarKey.eq_dec (literal_var l) v) as [Heq|Hneq].
-      * subst v. constructor; [apply Hfresh|apply Hnodup].
-      * apply Hnodup.
+        -- destruct l as [w|w]; cbn; intros Hbucket.
+           ++ exact Hlc.
+           ++ exfalso. apply (Hfresh w). unfold ClauseMap.find.
+              apply in_or_app. left.
+              rewrite ClauseMap.find_pos_add_other in Hbucket by
+                (intros Heq; apply Hvars; cbn; symmetry; exact Heq).
+              now rewrite ClauseMap.find_pos_add_neg in Hbucket.
+        -- destruct l as [w|w]; cbn; intros Hbucket.
+           ++ exfalso. apply (Hfresh w). unfold ClauseMap.find.
+              apply in_or_app. right.
+              rewrite ClauseMap.find_neg_add_other in Hbucket by
+                (intros Heq; apply Hvars; cbn; symmetry; exact Heq).
+              now rewrite ClauseMap.find_neg_add_pos in Hbucket.
+           ++ exact Hlc.
+      * destruct (Hwatch v ci Hin) as
+          [body [Hbody [Hnotin' [Hinc [Hnoopp' Hpolarity]]]]].
+        exists body. repeat split; try assumption.
+        -- destruct Hpolarity as [Hpossem _]. intros Hbucket. apply Hpossem.
+           eapply ClauseMap.find_pos_add_old; [|].
+           ++ intros Heq. apply (Hfresh v). now rewrite <- Heq.
+           ++ eapply ClauseMap.find_pos_add_old; [|exact Hbucket].
+              intros Heq. apply (Hfresh v). now rewrite <- Heq.
+        -- destruct Hpolarity as [_ Hnegsem]. intros Hbucket. apply Hnegsem.
+           eapply ClauseMap.find_neg_add_old; [|].
+           ++ intros Heq. apply (Hfresh v). now rewrite <- Heq.
+           ++ eapply ClauseMap.find_neg_add_old; [|exact Hbucket].
+              intros Heq. apply (Hfresh v). now rewrite <- Heq.
+  - apply ClauseMap.find_pos_add_nodup.
+    + apply ClauseMap.find_pos_add_nodup; [apply Hnodup|apply Hfresh].
+    + exact Hfresh'.
+  - apply ClauseMap.find_neg_add_nodup.
+    + apply ClauseMap.find_neg_add_nodup; [apply Hnodup|apply Hfresh].
+    + exact Hfresh'.
   - exact Hnoduptail.
   - intros ci Hin. apply Hrefs. now right.
   - exact Hpending.
@@ -1807,7 +1896,8 @@ Proof.
   - intros v d Hd. destruct (Hwatch v d Hd) as [body [Hfind Hrest]].
     exists body. split;
       [now apply find_clause_after_original_add_state|exact Hrest].
-  - exact Hnodup.
+  - apply Hnodup.
+  - apply Hnodup.
   - constructor; [simpl; tauto|constructor].
   - intros d Hd. simpl in Hd. destruct Hd as [Hd|Hd]; [subst d|contradiction].
     exists c. split; [apply find_added_clause|exact Hnoopp].
@@ -1881,7 +1971,8 @@ Proof.
   - intros v d Hd. destruct (Hwatch v d Hd) as [body [Hfind Hrest]].
     exists body. split;
       [now apply find_clause_after_learned_add_state|exact Hrest].
-  - exact Hnodup.
+  - apply Hnodup.
+  - apply Hnodup.
   - constructor; [simpl; tauto|constructor].
   - intros d Hd. simpl in Hd. destruct Hd as [Hd|Hd]; [subst d|contradiction].
     exists c. split; [apply find_added_learned_clause|exact Hnoopp].
@@ -1928,7 +2019,7 @@ Lemma add_first_watch_staged_inv : forall s c l,
          ClauseStore.add (fresh_clause_id s) c s.(state_clauses);
        state_learned := s.(state_learned);
        state_watched :=
-         ClauseMap.add (literal_var l) (Source (fresh_clause_id s))
+         ClauseMap.add l (Source (fresh_clause_id s))
            s.(state_watched);
        state_falsified := s.(state_falsified);
        state_pending := s.(state_pending) |}.
@@ -1967,15 +2058,42 @@ Proof.
       * apply find_added_clause.
       * now apply literal_undecided_not_InL.
       * now apply literal_InL.
-    + destruct (Hwatch v d Hd) as [body [Hfind Hrest]].
-      exists body. split;
-        [now apply find_clause_after_original_add_state|exact Hrest].
-  - intros v. cbn [state_watched]. rewrite ClauseMap.find_add_eq.
-    destruct (VarKey.eq_dec (literal_var l) v) as [Heq|Hneq].
-    + subst v. constructor.
-      * now apply fresh_clause_not_watched.
-      * apply Hnodup.
-    + apply Hnodup.
+      * destruct l as [w|w]; cbn; intros Hbucket.
+        -- exact Hlc.
+        -- exfalso. eapply fresh_clause_not_watched with (v := w);
+             [exact Hstateinv|].
+           unfold ClauseMap.find. apply in_or_app. left.
+           change (In (Source (fresh_clause_id s))
+             (ClauseMap.find_pos w
+               (ClauseMap.add (Neg w) (Source (fresh_clause_id s))
+                 s.(state_watched)))) in Hbucket.
+           now rewrite ClauseMap.find_pos_add_neg in Hbucket.
+      * destruct l as [w|w]; cbn; intros Hbucket.
+        -- exfalso. eapply fresh_clause_not_watched with (v := w);
+             [exact Hstateinv|].
+           unfold ClauseMap.find. apply in_or_app. right.
+           change (In (Source (fresh_clause_id s))
+             (ClauseMap.find_neg w
+               (ClauseMap.add (Pos w) (Source (fresh_clause_id s))
+                 s.(state_watched)))) in Hbucket.
+           now rewrite ClauseMap.find_neg_add_pos in Hbucket.
+        -- exact Hlc.
+    + destruct (Hwatch v d Hd) as
+        [body [Hfind [Hnotin [Hinc [Hnoopp' Hpolarity]]]]].
+      exists body. repeat split; try assumption.
+      * now apply find_clause_after_original_add_state.
+      * destruct Hpolarity as [Hpossem _]. intros Hbucket. apply Hpossem.
+        eapply ClauseMap.find_pos_add_old; [|exact Hbucket]. intros Heq.
+        eapply fresh_clause_not_watched with (v := v); [exact Hstateinv|].
+        now rewrite <- Heq.
+      * destruct Hpolarity as [_ Hnegsem]. intros Hbucket. apply Hnegsem.
+        eapply ClauseMap.find_neg_add_old; [|exact Hbucket]. intros Heq.
+        eapply fresh_clause_not_watched with (v := v); [exact Hstateinv|].
+        now rewrite <- Heq.
+  - apply ClauseMap.find_pos_add_nodup; [apply Hnodup|].
+    now apply fresh_clause_not_watched.
+  - apply ClauseMap.find_neg_add_nodup; [apply Hnodup|].
+    now apply fresh_clause_not_watched.
   - constructor; [simpl; tauto|constructor].
   - intros d Hd. simpl in Hd. destruct Hd as [Hd|Hd]; [subst d|contradiction].
     exists c. split; [apply find_added_clause|exact Hnoopp].
@@ -2005,7 +2123,7 @@ Proof.
         -- now right; left.
         -- right. right.
            now apply decided_clause_after_store_add with
-             (cm := ClauseMap.add (literal_var l) (Source (fresh_clause_id s))
+             (cm := ClauseMap.add l (Source (fresh_clause_id s))
                s.(state_watched))
              (pending := s.(state_pending)).
   - exact (proj1 Htrail).
@@ -2023,7 +2141,7 @@ Lemma add_learned_first_watch_staged_inv : forall s c l,
        state_learned :=
          ClauseStore.add (fresh_learned_clause_id s) c s.(state_learned);
        state_watched :=
-         ClauseMap.add (literal_var l) (Learned (fresh_learned_clause_id s))
+         ClauseMap.add l (Learned (fresh_learned_clause_id s))
            s.(state_watched);
        state_falsified := s.(state_falsified);
        state_pending := s.(state_pending) |}.
@@ -2037,7 +2155,7 @@ Proof.
   repeat split.
   - intros d body Hfind Hfalse.
     pose proof (find_learned_add_cases s c s.(state_trail)
-      (ClauseMap.add (literal_var l) (Learned (fresh_learned_clause_id s))
+      (ClauseMap.add l (Learned (fresh_learned_clause_id s))
         s.(state_watched))
       s.(state_falsified) s.(state_pending) d body Hfind)
       as [[-> ->]|Hold].
@@ -2057,15 +2175,42 @@ Proof.
       * apply find_added_learned_clause.
       * now apply literal_undecided_not_InL.
       * now apply literal_InL.
-    + destruct (Hwatch v d Hd) as [body [Hfind Hrest]].
-      exists body. split;
-        [now apply find_clause_after_learned_add_state|exact Hrest].
-  - intros v. cbn [state_watched]. rewrite ClauseMap.find_add_eq.
-    destruct (VarKey.eq_dec (literal_var l) v) as [Heq|Hneq].
-    + subst v. constructor.
-      * now apply fresh_learned_clause_not_watched.
-      * apply Hnodup.
-    + apply Hnodup.
+      * destruct l as [w|w]; cbn; intros Hbucket.
+        -- exact Hlc.
+        -- exfalso. eapply fresh_learned_clause_not_watched with (v := w);
+             [exact Hstateinv|].
+           unfold ClauseMap.find. apply in_or_app. left.
+           change (In (Learned (fresh_learned_clause_id s))
+             (ClauseMap.find_pos w
+               (ClauseMap.add (Neg w) (Learned (fresh_learned_clause_id s))
+                 s.(state_watched)))) in Hbucket.
+           now rewrite ClauseMap.find_pos_add_neg in Hbucket.
+      * destruct l as [w|w]; cbn; intros Hbucket.
+        -- exfalso. eapply fresh_learned_clause_not_watched with (v := w);
+             [exact Hstateinv|].
+           unfold ClauseMap.find. apply in_or_app. right.
+           change (In (Learned (fresh_learned_clause_id s))
+             (ClauseMap.find_neg w
+               (ClauseMap.add (Pos w) (Learned (fresh_learned_clause_id s))
+                 s.(state_watched)))) in Hbucket.
+           now rewrite ClauseMap.find_neg_add_pos in Hbucket.
+        -- exact Hlc.
+    + destruct (Hwatch v d Hd) as
+        [body [Hfind [Hnotin [Hinc [Hnoopp' Hpolarity]]]]].
+      exists body. repeat split; try assumption.
+      * now apply find_clause_after_learned_add_state.
+      * destruct Hpolarity as [Hpossem _]. intros Hbucket. apply Hpossem.
+        eapply ClauseMap.find_pos_add_old; [|exact Hbucket]. intros Heq.
+        eapply fresh_learned_clause_not_watched with (v := v);
+          [exact Hstateinv|]. now rewrite <- Heq.
+      * destruct Hpolarity as [_ Hnegsem]. intros Hbucket. apply Hnegsem.
+        eapply ClauseMap.find_neg_add_old; [|exact Hbucket]. intros Heq.
+        eapply fresh_learned_clause_not_watched with (v := v);
+          [exact Hstateinv|]. now rewrite <- Heq.
+  - apply ClauseMap.find_pos_add_nodup; [apply Hnodup|].
+    now apply fresh_learned_clause_not_watched.
+  - apply ClauseMap.find_neg_add_nodup; [apply Hnodup|].
+    now apply fresh_learned_clause_not_watched.
   - constructor; [simpl; tauto|constructor].
   - intros d Hd. simpl in Hd. destruct Hd as [Hd|Hd]; [subst d|contradiction].
     exists c. split; [apply find_added_learned_clause|exact Hnoopp].
@@ -2095,7 +2240,7 @@ Proof.
         -- now right; left.
         -- right. right.
            now apply decided_clause_after_learned_store_add with
-             (cm := ClauseMap.add (literal_var l) (Learned (fresh_learned_clause_id s))
+             (cm := ClauseMap.add l (Learned (fresh_learned_clause_id s))
                s.(state_watched))
              (pending := s.(state_pending)).
   - exact (proj1 Htrail).
@@ -2113,7 +2258,7 @@ Lemma watch_one_fresh_inv : forall work ci c clauses learned m cm fals pending l
   In l c -> literal_is_undecided m l = true ->
   staged_invariant work
     {| state_trail := m; state_clauses := clauses; state_learned := learned;
-       state_watched := ClauseMap.add (literal_var l) ci cm;
+       state_watched := ClauseMap.add l ci cm;
        state_falsified := fals; state_pending := pending |}.
 Proof.
   intros work ci c clauses learned m cm fals pending l Hfind Hnoopp Hinv
@@ -2140,12 +2285,25 @@ Proof.
       * exists c. repeat split; try assumption.
         -- now apply literal_undecided_not_InL.
         -- now apply literal_InL.
-      * exact (Hwatch v d Hin).
+        -- destruct l as [w|w]; cbn; intros Hbucket.
+           ++ exact Hlc.
+           ++ exfalso. apply Hfresh. unfold ClauseMap.find.
+              apply in_or_app. left. now rewrite ClauseMap.find_pos_add_neg in Hbucket.
+        -- destruct l as [w|w]; cbn; intros Hbucket.
+           ++ exfalso. apply Hfresh. unfold ClauseMap.find.
+              apply in_or_app. right. now rewrite ClauseMap.find_neg_add_pos in Hbucket.
+           ++ exact Hlc.
+      * destruct (Hwatch v d Hin) as
+          [body [Hbody [Hnotin [Hinc [Hnoopp' Hpolarity]]]]].
+        exists body. repeat split; try assumption.
+        -- destruct Hpolarity as [Hpossem _]. intros Hbucket. apply Hpossem.
+           eapply ClauseMap.find_pos_add_existing; eauto.
+        -- destruct Hpolarity as [_ Hnegsem]. intros Hbucket. apply Hnegsem.
+           eapply ClauseMap.find_neg_add_existing; eauto.
     + split.
-      * intros v. cbn [state_watched]. rewrite ClauseMap.find_add_eq.
-        destruct (VarKey.eq_dec (literal_var l) v) as [Heq|Hneq].
-        -- subst v. constructor; [exact Hfresh|apply Hnodup].
-        -- apply Hnodup.
+      * intros v. split.
+        -- apply ClauseMap.find_pos_add_nodup; [apply Hnodup|exact Hfresh].
+        -- apply ClauseMap.find_neg_add_nodup; [apply Hnodup|exact Hfresh].
       * split; [exact Hworknodup'|]. split.
         -- intros d Hd. exact (Hworkref d (or_intror Hd)).
         -- split; [exact Hpending|]. split.
@@ -2190,8 +2348,8 @@ Lemma watch_one_inv : forall work ci c clauses learned m cm fals pending l l' cm
   literal_is_undecided m l' = true ->
   literal_var l <> literal_var l' ->
   cm' = (if in_dec clause_pointer_eq_dec ci (ClauseMap.find (literal_var l) cm)
-    then ClauseMap.add (literal_var l') ci cm
-    else ClauseMap.add (literal_var l) ci cm) ->
+      then ClauseMap.add l' ci cm
+      else ClauseMap.add l ci cm) ->
   staged_invariant work
     {| state_trail := m; state_clauses := clauses; state_learned := learned;
        state_watched := cm';
@@ -2232,6 +2390,8 @@ Proof.
     [Hsat [Hfals [Hwatch [Hnodup [Hworknodup [Hworkref
       [Hpending [Hwork [Hcard Htrail]]]]]]]]].
   repeat split; try assumption.
+  - apply Hnodup.
+  - apply Hnodup.
   - intros p d Hpd. simpl in Hpd. destruct Hpd as [Heq|Hpd].
     + injection Heq as <- <-. exists c.
       split; [exact Hfind|]. split; [exact Hneeds|exact Hnoopp].
@@ -2291,6 +2451,8 @@ Proof.
       * now right; left.
       * now right; right; left.
       * now right; right; right.
+    + apply Hnodup.
+    + apply Hnodup.
     + intros d Hd. exact (Hworkref d (or_intror Hd)).
     + intros p d Hpd. simpl in Hpd. destruct Hpd as [Heq|Hpd].
       * injection Heq as <- <-. exists c.
@@ -2365,6 +2527,8 @@ Proof.
     + now right; left.
     + now right; right; left.
     + right. right. right. now apply Hfalspreserve.
+  - apply Hnodup.
+  - apply Hnodup.
   - intros d Hd. exact (Hworkref d (or_intror Hd)).
   - intros d Hd. specialize (Hwork d (or_intror Hd)).
     destruct Hwork as [Hone|[Hzero [Hpendingd|Hdecided']]].
@@ -2478,7 +2642,7 @@ Lemma prepare_set_lit_inv : forall l (m : Trail) clauses learned cm fals pending
     {| state_trail := m; state_clauses := clauses; state_learned := learned;
        state_watched := cm;
        state_falsified := fals; state_pending := pending |} ->
-  staged_invariant (ClauseMap.find (literal_var l) cm)
+  staged_invariant (ClauseMap.find_falsified l cm)
     {| state_trail := Decision l :: m; state_clauses := clauses;
        state_learned := learned;
        state_watched := ClauseMap.remove (literal_var l) cm;
@@ -2486,6 +2650,10 @@ Lemma prepare_set_lit_inv : forall l (m : Trail) clauses learned cm fals pending
 Proof.
   intros l m clauses learned cm fals pending Hlu Hinv.
   destruct Hinv as [Hinv _].
+  pose proof (watched_find_nodup []
+    {| state_trail := m; state_clauses := clauses; state_learned := learned;
+       state_watched := cm; state_falsified := fals; state_pending := pending |}
+    (literal_var l) Hinv) as Hallnodup.
   destruct Hinv as
     [Hcover [Hfals [Hwatch [Hnodup [_ [_ [Hpending [_ [Hcard Htrail]]]]]]]]].
   assert (Hdecided : forall d,
@@ -2502,6 +2670,27 @@ Proof.
     - now left.
     - right. exists body. split; [exact Hbody|].
       now apply satisfied_cons_undecided. }
+  assert (Homitted_decided : forall d,
+      In d (ClauseMap.find (literal_var l) cm) ->
+      ~ In d (ClauseMap.find_falsified l cm) ->
+      decided_clause d
+        {| state_trail := Decision l :: m; state_clauses := clauses;
+           state_learned := learned;
+           state_watched := ClauseMap.remove (literal_var l) cm;
+           state_falsified := fals; state_pending := pending |}).
+  { intros d Hin Hnotfalsified.
+    destruct (Hwatch (literal_var l) d Hin) as
+      [body [Hbody [_ [_ [_ Hpolarity]]]]].
+    right. exists body. split.
+    - exact Hbody.
+    - apply Is_true_eq_left, existsb_exists.
+      destruct l as [v|v]; cbn [literal_var ClauseMap.find_falsified] in *.
+      + destruct Hpolarity as [Hpossem _]. unfold ClauseMap.find in Hin.
+        apply in_app_or in Hin as [Hpos|Hneg]; [|contradiction].
+        exists (Pos v). split; [now apply Hpossem|apply literal_is_true_cons_self].
+      + destruct Hpolarity as [_ Hnegsem]. unfold ClauseMap.find in Hin.
+        apply in_app_or in Hin as [Hpos|Hneg]; [contradiction|].
+        exists (Neg v). split; [now apply Hnegsem|apply literal_is_true_cons_self]. }
   repeat split.
   - intros d body Hbody Hfalse.
     assert (Holdfalse :
@@ -2513,8 +2702,26 @@ Proof.
     destruct Hcover as [Htrivial|[Habs|[[v Hin]|Hd]]].
     + now left.
     + contradiction.
-    + destruct (Id.eq_dec (literal_var l) v) as [->|Hneq].
-      * now right; left.
+    + destruct (Id.eq_dec (literal_var l) v) as [Heq|Hneq].
+      * subst v. destruct (Hwatch (literal_var l) d Hin) as
+        [watched_body [Hwatchedbody [_ [_ [_ Hpolarity]]]]].
+        change (find_clause_in clauses learned d = Some body) in Hbody.
+        change (find_clause_in clauses learned d = Some watched_body)
+          in Hwatchedbody.
+        rewrite Hbody in Hwatchedbody. injection Hwatchedbody as <-.
+        destruct l as [v|v]; cbn [literal_var ClauseMap.find_falsified] in *.
+        -- destruct Hpolarity as [Hpossem _]. unfold ClauseMap.find in Hin.
+           apply in_app_or in Hin as [Hpos|Hneg].
+           ++ exfalso. apply (negb_prop_elim _ Hfalse).
+              apply Is_true_eq_left, existsb_exists. exists (Pos v).
+              split; [now apply Hpossem|apply literal_is_true_cons_self].
+           ++ now right; left.
+        -- destruct Hpolarity as [_ Hnegsem]. unfold ClauseMap.find in Hin.
+           apply in_app_or in Hin as [Hpos|Hneg].
+           ++ now right; left.
+           ++ exfalso. apply (negb_prop_elim _ Hfalse).
+              apply Is_true_eq_left, existsb_exists. exists (Neg v).
+              split; [now apply Hnegsem|apply literal_is_true_cons_self].
       * right. right. left. exists v. apply ClauseMap.find_remove.
         split; [exact Hin|congruence].
     + now right; right; right.
@@ -2522,30 +2729,49 @@ Proof.
     exists body. split; [exact Hbody|].
     now apply falsified_cons_undecided.
   - intros v d Hin. apply ClauseMap.find_remove in Hin as [Hin Hneq].
-    destruct (Hwatch v d Hin) as [body [Hbody [Hnotin [Hinc Hnoopp]]]].
+    destruct (Hwatch v d Hin) as
+      [body [Hbody [Hnotin [Hinc [Hnoopp Hpolarity]]]]].
     exists body. repeat split; try assumption.
-    intros Hin'. apply Hnotin.
-    now apply (InL_cons_other l (trail_model m) v Hneq).
-  - intros v. cbn [state_watched]. rewrite ClauseMap.find_remove_eq.
+    + intros Hin'. apply Hnotin.
+      now apply (InL_cons_other l (trail_model m) v Hneq).
+    + destruct Hpolarity as [Hpossem _]. intros Hbucket. apply Hpossem.
+      change (In d (ClauseMap.find_pos v
+        (ClauseMap.remove (literal_var l) cm))) in Hbucket.
+      rewrite ClauseMap.find_pos_remove in Hbucket.
+      destruct (VarKey.eq_dec (literal_var l) v); [congruence|exact Hbucket].
+    + destruct Hpolarity as [_ Hnegsem]. intros Hbucket. apply Hnegsem.
+      change (In d (ClauseMap.find_neg v
+        (ClauseMap.remove (literal_var l) cm))) in Hbucket.
+      rewrite ClauseMap.find_neg_remove in Hbucket.
+      destruct (VarKey.eq_dec (literal_var l) v); [congruence|exact Hbucket].
+  - change (NoDup (ClauseMap.find_pos v
+      (ClauseMap.remove (literal_var l) cm))).
+    rewrite ClauseMap.find_pos_remove.
     destruct (VarKey.eq_dec (literal_var l) v); [constructor|apply Hnodup].
-  - apply Hnodup.
-  - intros d Hd. destruct (Hwatch (literal_var l) d Hd)
-      as [body [Hbody [_ [_ Hnoopp]]]].
+  - change (NoDup (ClauseMap.find_neg v
+      (ClauseMap.remove (literal_var l) cm))).
+    rewrite ClauseMap.find_neg_remove.
+    destruct (VarKey.eq_dec (literal_var l) v); [constructor|apply Hnodup].
+  - destruct l; apply Hnodup.
+  - intros d Hd. apply ClauseMap.find_falsified_in in Hd.
+    destruct (Hwatch (literal_var l) d Hd)
+      as [body [Hbody [_ [_ [Hnoopp _]]]]].
     exists body. now split.
   - intros p d Hpd. destruct (Hpending p d Hpd)
       as [body [Hbody [Hneeds Hnoopp]]].
     exists body. split; [exact Hbody|]. split; [|exact Hnoopp].
     now apply clause_needs_literal_cons.
   - intros d Hd.
+    pose proof (ClauseMap.find_falsified_in l cm d Hd) as Hdall.
     pose proof (ClauseMap.card_of_remove cm d (literal_var l)) as Hremove.
     change (ClauseMap.card_of d (ClauseMap.remove (literal_var l) cm) +
       count_occ clause_pointer_eq_dec (ClauseMap.find (literal_var l) cm) d =
       ClauseMap.card_of d cm) in Hremove.
-    pose proof (count_occ_nodup_in _ d (Hnodup (literal_var l)) Hd) as Hcount.
+    pose proof (count_occ_nodup_in _ d Hallnodup Hdall) as Hcount.
     specialize (Hcard d). unfold card_of_watch in *.
     cbn -[ClauseMap.card_of] in *.
     destruct Hcard as [Hzero|[Htwo|[Hone Hwhy]]].
-    + pose proof (ClauseMap.card_of_in cm d (literal_var l) Hd). lia.
+    + pose proof (ClauseMap.card_of_in cm d (literal_var l) Hdall). lia.
     + left. lia.
     + right. split; [lia|].
       destruct Hwhy as [Habs|[Hpendingd|Hdecided']].
@@ -2561,11 +2787,15 @@ Proof.
     cbn -[ClauseMap.card_of] in *.
     destruct (in_dec clause_pointer_eq_dec d
       (ClauseMap.find (literal_var l) cm)) as [Hin|Hnotin].
-    + pose proof (count_occ_nodup_in _ d (Hnodup (literal_var l)) Hin)
+    + pose proof (count_occ_nodup_in _ d Hallnodup Hin)
         as Hcount.
       destruct Hcard as [Hzero|[Htwo|[Hone Hwhy]]].
       * pose proof (ClauseMap.card_of_in cm d (literal_var l) Hin). lia.
-      * right. right. split; [lia|]. now left.
+      * right. right. split; [lia|].
+        destruct (in_dec clause_pointer_eq_dec d
+          (ClauseMap.find_falsified l cm)) as [Hwork|Hnotwork].
+        -- now left.
+        -- right. right. now apply Homitted_decided.
       * left. lia.
     + pose proof (proj1 (count_occ_not_In clause_pointer_eq_dec _ _) Hnotin)
         as Hcount.
@@ -2623,6 +2853,8 @@ Proof.
     - injection Heq as <- <-. right. right. exists c. now split.
     - left. now exists p. }
   repeat split; try assumption.
+  - apply Hnodup.
+  - apply Hnodup.
   - intros p d Hpd. exact (Hpending p d (or_intror Hpd)).
   - intros d Hd. specialize (Hwork d Hd).
     destruct Hwork as [Hone|[Hzero [Hpendingd|Hdecided]]].
@@ -2860,7 +3092,8 @@ Lemma progress_state_clauses : forall s,
 Proof.
   intros [m clauses learned cm fals pending]. unfold progress_state. cbn.
   destruct pending as [|[l ci] pending].
-  - destruct (hd_error (ClauseMap.keys cm)); [apply set_lit_clauses|reflexivity].
+  - destruct (hd_error (ClauseMap.keys cm));
+      [apply fold_propagate_clauses|reflexivity].
   - destruct (literal_value (map trail_literal m) l) as [[|]|];
       try reflexivity.
     apply set_propagated_lit_clauses.
@@ -3470,7 +3703,7 @@ Proof.
         2:{ now apply learned_invariant_after_add, Hinv. }
         eapply watch_one_fresh_inv with
           (c := c)
-          (cm := ClauseMap.add (literal_var l) (Source (fresh_clause_id s))
+          (cm := ClauseMap.add l (Source (fresh_clause_id s))
             s.(state_watched))
           (pending := s.(state_pending)).
         -- apply find_added_clause.
@@ -3539,7 +3772,7 @@ Proof.
         2:{ eapply learned_invariant_after_learned_add; [exact (proj2 Hinv)|exact Himplied]. }
         eapply watch_one_fresh_inv with
           (c := c)
-          (cm := ClauseMap.add (literal_var l) (Learned (fresh_learned_clause_id s))
+          (cm := ClauseMap.add l (Learned (fresh_learned_clause_id s))
             s.(state_watched))
           (pending := s.(state_pending)).
         -- apply find_added_learned_clause.
