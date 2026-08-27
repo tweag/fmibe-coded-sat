@@ -3625,6 +3625,106 @@ Proof.
     exact Hindexedclauses.
 Qed.
 
+Lemma index_clause_result_trail : forall pointer s c result,
+  index_clause pointer s c = result ->
+  match result with
+  | Progress s' => s'.(state_trail) = s.(state_trail)
+  | Conflict s' _ => s'.(state_trail) = s.(state_trail)
+  end.
+Proof.
+  intros pointer s c result Hindex. unfold index_clause in Hindex.
+  destruct (scan_clause_once s.(state_trail) c) as [satisfied undecided].
+  destruct (orb satisfied (clause_has_opposite_literals c)); cbn in Hindex.
+  - destruct result; inversion Hindex; reflexivity.
+  - destruct undecided as [|l undecided].
+    + destruct result; inversion Hindex; reflexivity.
+    + destruct (find_different_var (literal_var l) undecided);
+        destruct result; inversion Hindex; reflexivity.
+Qed.
+
+Lemma reindex_clauses_result_trail : forall pointer store ids s result,
+  reindex_clauses pointer store ids s = result ->
+  match result with
+  | Progress s' => s'.(state_trail) = s.(state_trail)
+  | Conflict s' _ => s'.(state_trail) = s.(state_trail)
+  end.
+Proof.
+  intros pointer store ids. induction ids as [|ci ids IH];
+    intros s result Hreindex.
+  - cbn in Hreindex. destruct result; inversion Hreindex; reflexivity.
+  - cbn [reindex_clauses] in Hreindex.
+    destruct (ClauseStore.find ci store) as [c|] eqn:Hfind.
+    + destruct (index_clause (pointer ci) s c) as [indexed|conflict cause]
+        eqn:Hindex.
+      * specialize (IH indexed result Hreindex).
+        destruct result as [final|final finalcause]; cbn in IH |- *;
+          rewrite IH; exact (index_clause_result_trail _ _ _ _ Hindex).
+      * destruct result; inversion Hreindex; subst.
+        exact (index_clause_result_trail _ _ _ _ Hindex).
+    + exact (IH s result Hreindex).
+Qed.
+
+Lemma add_learned_result_trail : forall s c result,
+  add_learned s c = result ->
+  match result with
+  | Progress s' => s'.(state_trail) = s.(state_trail)
+  | Conflict s' _ => s'.(state_trail) = s.(state_trail)
+  end.
+Proof.
+  intros s c result Hadd. unfold add_learned, add_clause_to in Hadd.
+  destruct (scan_clause_once s.(state_trail) c) as [satisfied undecided].
+  destruct (orb satisfied (clause_has_opposite_literals c)); cbn in Hadd.
+  - destruct result; inversion Hadd; reflexivity.
+  - destruct undecided as [|l undecided].
+    + destruct result; inversion Hadd; reflexivity.
+    + destruct (find_different_var (literal_var l) undecided);
+        destruct result; inversion Hadd; reflexivity.
+Qed.
+
+Lemma backtrack_conflict_trail_empty : forall conflict cause s' cause',
+  backtrack (conflict, cause) = Some (Conflict s' cause') ->
+  s'.(state_trail) = [].
+Proof.
+  intros conflict cause s' cause' Hbacktrack. unfold backtrack in Hbacktrack.
+  destruct (analyze_conflict conflict cause) as [learned|]; [|discriminate].
+  remember
+    {| state_trail := [];
+       state_clauses := conflict.(state_clauses);
+       state_learned := conflict.(state_learned);
+       state_watched := ClauseMap.empty;
+       state_falsified := [];
+       state_pending := [] |} as reset eqn:Hreset.
+  destruct (reindex_clauses Source conflict.(state_clauses)
+      (ClauseStore.keys conflict.(state_clauses)) reset)
+    as [originals|rebuild rebuildcause] eqn:Horiginals.
+  2:{ injection Hbacktrack as <- <-.
+      rewrite (reindex_clauses_result_trail _ _ _ _ _ Horiginals).
+      subst reset. reflexivity. }
+  destruct (reindex_clauses Learned conflict.(state_learned)
+      (ClauseStore.keys conflict.(state_learned)) originals)
+    as [indexed|rebuild rebuildcause] eqn:Hlearned.
+  2:{ injection Hbacktrack as <- <-.
+      rewrite (reindex_clauses_result_trail _ _ _ _ _ Hlearned).
+      rewrite (reindex_clauses_result_trail _ _ _ _ _ Horiginals).
+      subst reset. reflexivity. }
+  destruct (add_learned indexed learned) as [final|final finalcause]
+    eqn:Hadd; [discriminate|].
+  injection Hbacktrack as <- <-.
+  rewrite (add_learned_result_trail _ _ _ Hadd).
+  rewrite (reindex_clauses_result_trail _ _ _ _ _ Hlearned).
+  rewrite (reindex_clauses_result_trail _ _ _ _ _ Horiginals).
+  subst reset. reflexivity.
+Qed.
+
+Lemma backtrack_after_conflict_none : forall conflict cause s' cause',
+  backtrack (conflict, cause) = Some (Conflict s' cause') ->
+  backtrack (s', cause') = None.
+Proof.
+  intros conflict cause s' cause' Hbacktrack.
+  pose proof (backtrack_conflict_trail_empty _ _ _ _ Hbacktrack) as Hempty.
+  unfold backtrack, analyze_conflict. rewrite Hempty. reflexivity.
+Qed.
+
 Inductive delay_returns_in {A : Type} : Delay A -> A -> nat -> Prop :=
   | delay_returns_in_now (x : A) : delay_returns_in (Now x) x 0
   | delay_returns_in_later (d : Delay A) (x : A) (n : nat) :
@@ -3688,6 +3788,40 @@ Proof.
       * lia.
 Qed.
 
+Lemma backtrack_until_unfold : forall conflict,
+  backtrack_until conflict =
+    match backtrack conflict with
+    | None => Now None
+    | Some (Progress s') => Now (Some s')
+    | Some (Conflict s' cause) => Later (backtrack_until (s', cause))
+    end.
+Proof.
+  intros conflict.
+  transitivity
+    (match backtrack_until conflict with
+     | Now x => Now x
+     | Later d => Later d
+     end).
+  - destruct (backtrack_until conflict); reflexivity.
+  - cbn [backtrack_until].
+    destruct (backtrack conflict) as [[s'|s' cause]|]; reflexivity.
+Qed.
+
+Lemma backtrack_until_some : forall conflict cause next n,
+  delay_returns_in (backtrack_until (conflict, cause)) (Some next) n ->
+  backtrack (conflict, cause) = Some (Progress next).
+Proof.
+  intros conflict cause next n Hreturns.
+  rewrite backtrack_until_unfold in Hreturns.
+  destruct (backtrack (conflict, cause)) as [[s'|s' cause']|]
+    eqn:Hbacktrack.
+  - inversion Hreturns; subst. reflexivity.
+  - inversion Hreturns as [|? ? n' Htail]; subst.
+    pose proof (backtrack_after_conflict_none _ _ _ _ Hbacktrack) as Hnone.
+    rewrite backtrack_until_unfold, Hnone in Htail. inversion Htail.
+  - inversion Hreturns.
+Qed.
+
 Lemma sat_unfold : forall s,
   sat s =
     delay_bind (rush s)
@@ -3695,10 +3829,12 @@ Lemma sat_unfold : forall s,
         match result with
         | inl final => Now (SAT final.(state_trail))
         | inr conflict =>
-            match backtrack conflict with
-            | Some (Progress s') => Later (sat s')
-            | Some (Conflict _ _) | None => Now UNSAT
-            end
+            delay_bind (backtrack_until conflict)
+              (fun result =>
+                match result with
+                | Some s' => Later (sat s')
+                | None => Now UNSAT
+                end)
         end).
 Proof.
   intros s.
@@ -3725,10 +3861,14 @@ Proof.
   - cbn in Hcontinuation. inversion Hcontinuation; subst.
     eapply rush_model_sound; eauto.
     now apply delay_returns_in_returns with (n := nrush).
-  - cbn -[backtrack] in Hcontinuation.
-    destruct (backtrack (conflict, cause)) as [[next|next nextcause]|]
-      eqn:Hbacktrack.
-    + inversion Hcontinuation as [|? ? nrecursive Hrecursive]; subst.
+  - cbn -[delay_bind backtrack_until] in Hcontinuation.
+    destruct (delay_bind_returns_in _ _ _ _ _ _ Hcontinuation)
+      as [backtracked [nbacktrack [nresume
+        [Hbacktrackreturns [Hresume Hbacktracksteps]]]]].
+    destruct backtracked as [next|].
+    + inversion Hresume as [|? ? nrecursive Hrecursive]; subst.
+      pose proof (backtrack_until_some conflict cause next nbacktrack
+        Hbacktrackreturns) as Hbacktrack.
       pose proof (rush_conflict_sound s conflict cause Hinv Hfalsified
         (delay_returns_in_returns _ _ _ _ Hrush)) as [Himplied Hfalse].
       pose proof (rush_conflict_inv s conflict cause Hinv
@@ -3741,8 +3881,7 @@ Proof.
         as [Hnextinv [Hnextfalsified Hnextclauses]].
       rewrite <- Hconflictclauses, <- Hnextclauses.
       eapply H; eauto. lia.
-    + inversion Hcontinuation.
-    + inversion Hcontinuation.
+    + inversion Hresume.
 Qed.
 
 Theorem sat_model_sound : forall s model,

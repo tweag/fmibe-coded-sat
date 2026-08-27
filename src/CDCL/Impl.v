@@ -533,6 +533,13 @@ Variant sat_result :=
   | SAT (model : Model)
   | UNSAT.
 
+CoFixpoint backtrack_until (conflict : State * Clause) : Delay (option State) :=
+  match backtrack conflict with
+  | None => Now None
+  | Some (Progress s') => Now (Some s')
+  | Some (Conflict s' cause) => Later (backtrack_until (s', cause))
+  end.
+
 #[bypass_check(guard)]
 CoFixpoint sat (s : State) : Delay sat_result :=
   delay_bind (rush s)
@@ -540,8 +547,10 @@ CoFixpoint sat (s : State) : Delay sat_result :=
       match result with
       | inl final => Now (SAT final.(state_trail))
       | inr conflict =>
-          match backtrack conflict with
-          | Some (Progress s') => Later (sat s')
-          | Some (Conflict _ _) | None => Now UNSAT
-          end
+          delay_bind (backtrack_until conflict)
+            (fun result =>
+              match result with
+              | Some s' => Later (sat s')
+              | None => Now UNSAT
+              end)
       end).
