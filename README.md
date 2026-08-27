@@ -36,3 +36,19 @@ keep things a little bit like the expected setup, I try to split files in two:
 an implementation file, using only tools available to standard programming
 languages, and a specification file writing proofs.
 
+## Usage
+
+Run the solver on a problem in DIMACS CNF format with:
+
+```console
+$ dune exec app/solve.exe -- sat path/to/problem.cnf
+```
+
+For a satisfiable problem, `solve` prints `SAT!` followed by a model as signed
+literals. For an unsatisfiable problem, it prints `UNSAT!`.
+
+To display the available commands and options, run:
+
+```console
+$ dune exec app/solve.exe -- --help
+```
