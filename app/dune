@@ -12,4 +12,4 @@
 (executable
  (name solve)
  (modules solve)
- (libraries cmdliner fmibe_app))
+ (libraries cmdliner fmibe_app unix))

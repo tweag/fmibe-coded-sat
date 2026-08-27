@@ -6,4 +6,8 @@ let () =
   let expected =
     [ [ Sat.Pos 1; Sat.Neg 3 ]; [ Sat.Pos 2; Sat.Pos 3; Sat.Neg 1 ] ]
   in
-  assert (actual = expected)
+  assert (actual = expected);
+  let multiline =
+    Dimacs_parser.parse_string "p cnf 2 1\n1\n-2\n0\n%\n0\n"
+  in
+  assert (multiline = [ [ Sat.Pos 1; Sat.Neg 2 ] ])

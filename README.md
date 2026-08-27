@@ -52,3 +52,18 @@ To display the available commands and options, run:
 ```console
 $ dune exec app/solve.exe -- --help
 ```
+
+Run the SATLIB benchmark corpus with the optimized benchmark profile:
+
+```console
+$ dune exec --profile benchmark app/solve.exe -- bench sat benchmarks/satlib
+```
+
+Each DIMACS file is solved once. The command prints its result and elapsed time
+in a table, followed by the total elapsed time.
+
+The benchmark command also accepts a single DIMACS file:
+
+```console
+$ dune exec --profile benchmark app/solve.exe -- bench sat path/to/problem.cnf
+```
