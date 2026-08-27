@@ -5,7 +5,8 @@ module Term = struct
   type location = Location.t
 
   let atom ?loc:_ value =
-    if value > 0 then Sat.Pos value else Sat.Neg (-value)
+    if value > 0 then Sat.Pos (Sat.Id.of_nat value)
+    else Sat.Neg (Sat.Id.of_nat (-value))
 end
 
 module Statement = struct

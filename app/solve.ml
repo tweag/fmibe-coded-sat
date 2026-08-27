@@ -16,8 +16,8 @@ let rec add_clauses state = function
       | Sat.Conflict _ -> None
 
 let print_literal = function
-  | Sat.Pos variable -> Printf.printf "%d " variable
-  | Sat.Neg variable -> Printf.printf "-%d " variable
+  | Sat.Pos variable -> Printf.printf "%d " (Sat.Id.to_nat variable)
+  | Sat.Neg variable -> Printf.printf "-%d " (Sat.Id.to_nat variable)
 
 let print_model model =
   print_endline "SAT!";

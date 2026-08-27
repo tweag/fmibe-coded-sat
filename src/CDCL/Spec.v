@@ -1,6 +1,7 @@
 (* Specifications and proofs for the CDCL SAT solver  *)
 
 Require Import FMV.CDCL.Impl.
+Require Import FMV.Id.
 Require Import Stdlib.Lists.List.
 Import ListNotations.
 Require Import Stdlib.Bool.Bool.
@@ -54,7 +55,7 @@ Proof.
 Qed.
 
 Definition lit_is_me (v : Var) (l : Literal) : bool :=
-  literal_var l =? v.
+  Id.eqb (literal_var l) v.
 
 (* Sets all the variables absent from `m` to `false` *)
 Definition complete_model (m : Model) : SModel :=
@@ -78,9 +79,9 @@ Proof.
   induction m as [|x m IH]; intros l Hundecided Hin; [contradiction|].
   simpl in Hin. destruct Hin as [->|Hin].
   - unfold literal_is_undecided, literal_value in Hundecided. simpl in Hundecided.
-    rewrite Nat.eqb_refl in Hundecided. destruct l; discriminate.
+    rewrite Id.eqb_refl in Hundecided. destruct l; discriminate.
   - unfold literal_is_undecided, literal_value in Hundecided. simpl in Hundecided.
-    destruct (literal_var x =? literal_var l) eqn:Heq;
+    destruct (Id.eqb (literal_var x) (literal_var l)) eqn:Heq;
       [destruct x, l; discriminate|].
     apply (IH l); [exact Hundecided|exact Hin].
 Qed.
@@ -91,23 +92,23 @@ Lemma literal_undecided_not_InL : forall m l,
 Proof.
   intros m l Hundecided [Hpos|Hneg].
   all: unfold literal_is_undecided, literal_value in Hundecided;
-       destruct (find (fun l' => literal_var l' =? literal_var l) m)
+       destruct (find (fun l' => Id.eqb (literal_var l') (literal_var l)) m)
          as [[v|v]|] eqn:Hfind.
   all: try (destruct l; discriminate).
   - pose proof (find_none _ _ Hfind _ Hpos) as Hfalse.
-    cbn [literal_var] in Hfalse. now rewrite Nat.eqb_refl in Hfalse.
+    cbn [literal_var] in Hfalse. now rewrite Id.eqb_refl in Hfalse.
   - pose proof (find_none _ _ Hfind _ Hneg) as Hfalse.
-    cbn [literal_var] in Hfalse. now rewrite Nat.eqb_refl in Hfalse.
+    cbn [literal_var] in Hfalse. now rewrite Id.eqb_refl in Hfalse.
 Qed.
 
 Lemma not_InL_literal_undecided : forall m l,
   ~ InL (literal_var l) m -> literal_is_undecided m l = true.
 Proof.
   intros m l Hnotin. unfold literal_is_undecided, literal_value.
-  destruct (find (fun x => literal_var x =? literal_var l) m)
+  destruct (find (fun x => Id.eqb (literal_var x) (literal_var l)) m)
     as [x|] eqn:Hfind; [|reflexivity].
   exfalso. apply find_some in Hfind as [Hin Hvars].
-  apply Nat.eqb_eq in Hvars. apply Hnotin.
+  apply Id.eqb_eq in Hvars. apply Hnotin.
   destruct x as [v|v]; cbn [literal_var] in Hvars; subst v;
     [left|right]; exact Hin.
 Qed.
@@ -119,9 +120,9 @@ Lemma literal_is_true_cons_undecided : forall m l x,
 Proof.
   intros m l x Hlu Hxt.
   unfold literal_is_undecided, literal_is_true, literal_value in *.
-  simpl. destruct (literal_var l =? literal_var x) eqn:Hvars.
-  - apply Nat.eqb_eq in Hvars. rewrite Hvars in Hlu.
-    destruct (find (fun l' => literal_var l' =? literal_var x) m) eqn:Hfind.
+  simpl. destruct (Id.eqb (literal_var l) (literal_var x)) eqn:Hvars.
+  - apply Id.eqb_eq in Hvars. rewrite Hvars in Hlu.
+    destruct (find (fun l' => Id.eqb (literal_var l') (literal_var x)) m) eqn:Hfind.
     + destruct l, l0; discriminate Hlu.
     + discriminate Hxt.
   - exact Hxt.
@@ -131,7 +132,7 @@ Lemma literal_is_true_cons_self : forall m l,
   literal_is_true (l :: m) l = true.
 Proof.
   intros m [v|v]; unfold literal_is_true, literal_value; simpl;
-    rewrite Nat.eqb_refl; reflexivity.
+    rewrite Id.eqb_refl; reflexivity.
 Qed.
 
 Lemma decided_literal_cons_undecided : forall m l x,
@@ -142,9 +143,9 @@ Lemma decided_literal_cons_undecided : forall m l x,
 Proof.
   intros m l x Hlu Hxu.
   unfold literal_is_undecided, literal_is_true, literal_value in *.
-  simpl. destruct (literal_var l =? literal_var x) eqn:Hvars.
-  - apply Nat.eqb_eq in Hvars. rewrite Hvars in Hlu.
-    destruct (find (fun l' => literal_var l' =? literal_var x) m)
+  simpl. destruct (Id.eqb (literal_var l) (literal_var x)) eqn:Hvars.
+  - apply Id.eqb_eq in Hvars. rewrite Hvars in Hlu.
+    destruct (find (fun l' => Id.eqb (literal_var l') (literal_var x)) m)
       as [y|] eqn:Hfind.
     + destruct l, y; discriminate Hlu.
     + discriminate Hxu.
@@ -211,12 +212,12 @@ Lemma literal_pending_cons : forall m l x,
 Proof.
   intros m l x Hlu [Hundecided|Hdecided].
   2:{ right. now apply literal_decided_cons. }
-  destruct (Nat.eq_dec (literal_var l) (literal_var x)) as [Heq|Hneq].
+  destruct (Id.eq_dec (literal_var l) (literal_var x)) as [Heq|Hneq].
   - right. destruct l as [v|v], x as [w|w]; cbn in Heq; subst w;
       unfold literal_is_decided, literal_is_undecided, literal_value;
-      simpl; rewrite Nat.eqb_refl; reflexivity.
+      simpl; rewrite Id.eqb_refl; reflexivity.
   - left. unfold literal_is_undecided, literal_value in Hundecided |- *.
-    simpl. apply Nat.eqb_neq in Hneq. now rewrite Hneq.
+    simpl. apply Id.eqb_neq in Hneq. now rewrite Hneq.
 Qed.
 
 Lemma literal_false_cons_undecided : forall m l x,
@@ -226,9 +227,9 @@ Lemma literal_false_cons_undecided : forall m l x,
 Proof.
   intros m l x Hlu Hfalse.
   unfold literal_is_undecided, literal_value in Hlu, Hfalse |- *.
-  simpl. destruct (literal_var l =? literal_var x) eqn:Hvars.
-  - apply Nat.eqb_eq in Hvars. rewrite Hvars in Hlu.
-    destruct (find (fun l' => literal_var l' =? literal_var x) m)
+  simpl. destruct (Id.eqb (literal_var l) (literal_var x)) eqn:Hvars.
+  - apply Id.eqb_eq in Hvars. rewrite Hvars in Hlu.
+    destruct (find (fun l' => Id.eqb (literal_var l') (literal_var x)) m)
       as [y|] eqn:Hfind; [|discriminate].
     destruct l, y; discriminate.
   - exact Hfalse.
@@ -312,10 +313,10 @@ Lemma consistent_model_literal_true : forall m l,
 Proof.
   induction m as [|x m IH]; intros l Hconsistent Hin; [contradiction|].
   simpl in Hin. destruct Hin as [->|Hin].
-  - unfold literal_value. simpl. rewrite Nat.eqb_refl. destruct l; reflexivity.
+  - unfold literal_value. simpl. rewrite Id.eqb_refl. destruct l; reflexivity.
   - unfold literal_value. simpl.
-    destruct (literal_var x =? literal_var l) eqn:Hvar.
-    + apply Nat.eqb_eq in Hvar.
+    destruct (Id.eqb (literal_var x) (literal_var l)) eqn:Hvar.
+    + apply Id.eqb_eq in Hvar.
       destruct x as [v|v], l as [w|w]; cbn in Hvar; subst w.
       * reflexivity.
       * exfalso. apply Hconsistent. exists v. split; simpl;
@@ -712,7 +713,7 @@ Proof.
   intros m [v|v] Htrue;
     unfold literal_is_true, literal_value, opposite_literal in *;
     simpl in *;
-    destruct (find (fun l' => literal_var l' =? v) m) as [[w|w]|];
+    destruct (find (fun l' => Id.eqb (literal_var l') v) m) as [[w|w]|];
     discriminate Htrue || reflexivity.
 Qed.
 
@@ -742,27 +743,16 @@ Proof.
   intros l Hin. now apply decisions_hold.
 Qed.
 
-Lemma fold_max_ge : forall xs x,
-  In x xs -> x <= fold_right Nat.max 0 xs.
-Proof.
-  intros xs. induction xs as [|y ys IH]; intros x Hin; [contradiction|].
-  simpl. destruct Hin as [->|Hin].
-  - apply Nat.le_max_l.
-  - eapply Nat.le_trans; [now apply IH|apply Nat.le_max_r].
-Qed.
-
 Lemma fresh_clause_id_not_in : forall s,
   ~ In (fresh_clause_id s) (ClauseStore.keys s.(state_clauses)).
 Proof.
-  intros s Hin. unfold fresh_clause_id in Hin.
-  pose proof (fold_max_ge _ _ Hin). lia.
+  intros s. unfold fresh_clause_id. apply Id.fresh_not_in.
 Qed.
 
 Lemma fresh_learned_clause_id_not_in : forall s,
   ~ In (fresh_learned_clause_id s) (ClauseStore.keys s.(state_learned)).
 Proof.
-  intros s Hin. unfold fresh_learned_clause_id in Hin.
-  pose proof (fold_max_ge _ _ Hin). lia.
+  intros s. unfold fresh_learned_clause_id. apply Id.fresh_not_in.
 Qed.
 
 Lemma fresh_clause_id_fresh : forall s,
@@ -794,7 +784,7 @@ Lemma find_added_clause : forall s c,
     (ClauseStore.add (fresh_clause_id s) c s.(state_clauses)) = Some c.
 Proof.
   intros s c. rewrite ClauseStore.find_add_eq.
-  destruct (VarKey.eq_dec (fresh_clause_id s) (fresh_clause_id s));
+  destruct (ClauseIdKey.eq_dec (fresh_clause_id s) (fresh_clause_id s));
     [reflexivity|contradiction].
 Qed.
 
@@ -803,7 +793,7 @@ Lemma find_added_learned_clause : forall s c,
     (ClauseStore.add (fresh_learned_clause_id s) c s.(state_learned)) = Some c.
 Proof.
   intros s c. rewrite ClauseStore.find_add_eq.
-  destruct (VarKey.eq_dec (fresh_learned_clause_id s)
+  destruct (ClauseIdKey.eq_dec (fresh_learned_clause_id s)
     (fresh_learned_clause_id s)); [reflexivity|contradiction].
 Qed.
 
@@ -813,7 +803,7 @@ Lemma find_old_clause_after_add : forall s c ci body,
     (ClauseStore.add (fresh_clause_id s) c s.(state_clauses)) = Some body.
 Proof.
   intros s c ci body Hfind. rewrite ClauseStore.find_add_eq.
-  destruct (VarKey.eq_dec (fresh_clause_id s) ci) as [Heq|Hneq].
+  destruct (ClauseIdKey.eq_dec (fresh_clause_id s) ci) as [Heq|Hneq].
   - subst ci. rewrite fresh_clause_id_fresh in Hfind. discriminate.
   - exact Hfind.
 Qed.
@@ -838,7 +828,7 @@ Proof.
   intros s c [ci|ci] body Hfind; cbn [find_clause find_clause_in] in *.
   - exact Hfind.
   - rewrite ClauseStore.find_add_eq.
-    destruct (VarKey.eq_dec (fresh_learned_clause_id s) ci) as [Heq|Hneq].
+    destruct (ClauseIdKey.eq_dec (fresh_learned_clause_id s) ci) as [Heq|Hneq].
     + subst ci. rewrite fresh_learned_clause_id_fresh in Hfind. discriminate.
     + exact Hfind.
 Qed.
@@ -896,7 +886,7 @@ Proof.
   - right. exact Hfind.
   - cbn [find_clause find_clause_in state_clauses state_learned] in Hfind.
     rewrite ClauseStore.find_add_eq in Hfind.
-    destruct (VarKey.eq_dec (fresh_learned_clause_id s) ci) as [Heq|Hneq].
+    destruct (ClauseIdKey.eq_dec (fresh_learned_clause_id s) ci) as [Heq|Hneq].
     + subst ci. injection Hfind as <-. now left.
     + now right.
 Qed.
@@ -1005,7 +995,7 @@ Lemma learned_invariant_after_learned_add :
 Proof.
   intros s c trail watched fals pending Hlearned Himplied ci learned Hfind.
   cbn [state_learned] in Hfind. rewrite ClauseStore.find_add_eq in Hfind.
-  destruct (VarKey.eq_dec (fresh_learned_clause_id s) ci) as [Heq|Hneq].
+  destruct (ClauseIdKey.eq_dec (fresh_learned_clause_id s) ci) as [Heq|Hneq].
   - injection Hfind as <-. exact Himplied.
   - now apply Hlearned with (ci := ci).
 Qed.
@@ -1045,7 +1035,7 @@ Proof.
   - intros [d|d] body Hfind Hfalse.
     + cbn [find_clause find_clause_in state_clauses state_learned] in Hfind.
       rewrite ClauseStore.find_add_eq in Hfind.
-      destruct (VarKey.eq_dec (fresh_clause_id s) d) as [Heq|Hneq].
+      destruct (ClauseIdKey.eq_dec (fresh_clause_id s) d) as [Heq|Hneq].
       * injection Hfind as <-. destruct Hresolved as [Htrue|Htrivial].
         -- exfalso. exact (negb_prop_elim _ Hfalse Htrue).
         -- now left.
@@ -1107,7 +1097,7 @@ Proof.
   unfold state_invariant. apply conj.
   2:{ intros ci learned Hfind.
       cbn [state_learned] in Hfind. rewrite ClauseStore.find_add_eq in Hfind.
-      destruct (VarKey.eq_dec (fresh_learned_clause_id s) ci) as [Heq|Hneq].
+      destruct (ClauseIdKey.eq_dec (fresh_learned_clause_id s) ci) as [Heq|Hneq].
       - injection Hfind as <-. exact Himplied.
       - now apply Hlearned with (ci := ci). }
   repeat split; try assumption.
@@ -1179,10 +1169,10 @@ Lemma find_different_var_spec : forall v ls l,
 Proof.
   intros v ls. induction ls as [|x xs IH]; intros l Hfind; simpl in Hfind.
   - discriminate.
-  - destruct (v =? literal_var x) eqn:Heq.
+  - destruct (Id.eqb v (literal_var x)) eqn:Heq.
     + destruct (IH l Hfind) as [Hin Hneq]. now split; [right|].
     + injection Hfind as ->. split; [now left|].
-      now apply Nat.eqb_neq.
+      now apply Id.eqb_neq.
 Qed.
 
 Lemma scan_clause_inl_spec : forall m ci c cm fals l,
@@ -1276,9 +1266,9 @@ Lemma find_different_var_none : forall v ls,
 Proof.
   intros v ls. induction ls as [|x xs IH]; intros Hnone l Hin;
     [contradiction|].
-  simpl in Hnone. destruct (v =? literal_var x) eqn:Heq.
+  simpl in Hnone. destruct (Id.eqb v (literal_var x)) eqn:Heq.
   - destruct Hin as [->|Hin].
-    + now apply Nat.eqb_eq in Heq.
+    + now apply Id.eqb_eq in Heq.
     + now apply IH.
   - discriminate.
 Qed.
@@ -1314,7 +1304,7 @@ Proof.
       split; [exact Hxc|exact (proj1 Hlin)]. }
   unfold literal_is_true, literal_is_undecided in Hxtrue, Hxundecided.
   unfold literal_value in *.
-  destruct (find (fun l' => literal_var l' =? literal_var x) m)
+  destruct (find (fun l' => Id.eqb (literal_var l') (literal_var x)) m)
     as [[v|v]|] eqn:Hvalue; destruct x; try discriminate; reflexivity.
 Qed.
 
@@ -1797,7 +1787,7 @@ Proof.
   - intros [d|d] body Hfind Hfalse.
     + cbn [find_clause find_clause_in state_clauses state_learned] in Hfind.
       rewrite ClauseStore.find_add_eq in Hfind.
-      destruct (VarKey.eq_dec (fresh_clause_id s) d) as [->|Hneq].
+      destruct (ClauseIdKey.eq_dec (fresh_clause_id s) d) as [->|Hneq].
       * injection Hfind as <-. right. left. now left.
       * specialize (Hcover (Source d) body Hfind Hfalse).
         destruct Hcover as [Hopp|[Hwork|[Hwatched|Hinfals]]].
@@ -1953,7 +1943,7 @@ Proof.
   - intros [d|d] body Hfind Hfalse.
     + cbn [find_clause find_clause_in state_clauses state_learned] in Hfind.
       rewrite ClauseStore.find_add_eq in Hfind.
-      destruct (VarKey.eq_dec (fresh_clause_id s) d) as [Heq|Hneq].
+      destruct (ClauseIdKey.eq_dec (fresh_clause_id s) d) as [Heq|Hneq].
       * subst d. injection Hfind as <-. right. left. now left.
       * specialize (Hcover (Source d) body Hfind Hfalse).
         destruct Hcover as [Hopp|[Hwork|[Hwatched|Hinfals]]].
@@ -2523,7 +2513,7 @@ Proof.
     destruct Hcover as [Htrivial|[Habs|[[v Hin]|Hd]]].
     + now left.
     + contradiction.
-    + destruct (Nat.eq_dec (literal_var l) v) as [->|Hneq].
+    + destruct (Id.eq_dec (literal_var l) v) as [->|Hneq].
       * now right; left.
       * right. right. left. exists v. apply ClauseMap.find_remove.
         split; [exact Hin|congruence].
@@ -3141,9 +3131,9 @@ Lemma literal_value_false_opposite_in : forall m l,
   literal_value m l = Some false -> In (opposite_literal l) m.
 Proof.
   intros m l Hfalse. unfold literal_value in Hfalse.
-  destruct (find (fun l' => literal_var l' =? literal_var l) m)
+  destruct (find (fun l' => Id.eqb (literal_var l') (literal_var l)) m)
     as [found|] eqn:Hfind; [|discriminate].
-  apply find_some in Hfind as [Hin Hvar]. apply Nat.eqb_eq in Hvar.
+  apply find_some in Hfind as [Hin Hvar]. apply Id.eqb_eq in Hvar.
   destruct found as [v|v], l as [w|w]; cbn in Hvar; subst w;
     try discriminate; exact Hin.
 Qed.
@@ -3267,11 +3257,11 @@ Proof.
   intros m [v|v] Htrue.
   - unfold literal_is_true, literal_value,
       satisfies_literal, complete_model, lit_is_me in *. simpl in *.
-    destruct (find (fun l => literal_var l =? v) m) as [[w|w]|];
+    destruct (find (fun l => Id.eqb (literal_var l) v) m) as [[w|w]|];
       try discriminate; reflexivity.
   - unfold literal_is_true, literal_value,
       satisfies_literal, complete_model, lit_is_me in *. simpl in *.
-    destruct (find (fun l => literal_var l =? v) m) as [[w|w]|];
+    destruct (find (fun l => Id.eqb (literal_var l) v) m) as [[w|w]|];
       try discriminate; reflexivity.
 Qed.
 

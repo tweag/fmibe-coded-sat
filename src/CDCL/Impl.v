@@ -8,6 +8,7 @@ Require Import Stdlib.micromega.Lia.
 Require Import FMV.FiniteMap.
 Require Import FMV.ListMap.
 Require Import FMV.Map.
+Require Import FMV.Id.
 
 (* General architecture:
    - Iterate until find a model or a definite contradiction:
@@ -18,14 +19,14 @@ Require Import FMV.Map.
      - (TODO) Learn a conflict clause and backtrack.
  *)
 
-Definition Var := nat.
+Definition Var := Id.t.
 Variant Literal :=
   | Pos (l : Var)
   | Neg (l : Var)
 .
 
 Definition Clause := list Literal.
-Definition ClauseId := nat.
+Definition ClauseId := Id.t.
 
 Variant ClausePointer :=
   | Source (c : ClauseId)
@@ -56,7 +57,7 @@ Global Coercion trail_model : Trail >-> Model.
 
 Definition literal_eq_dec (l r : Literal) : {l = r} + {l <> r}.
 Proof.
-  decide equality; apply Nat.eq_dec.
+  decide equality; apply Id.eq_dec.
 Defined.
 
 Definition opposite_literal (l : Literal) : Literal :=
@@ -78,12 +79,17 @@ Definition clause_eq_dec : forall l r : Clause, {l = r} + {l <> r} :=
 
 Module VarKey.
   Definition t := Var.
-  Definition eq_dec := Nat.eq_dec.
+  Definition eq_dec := Id.eq_dec.
 End VarKey.
+
+Module ClauseIdKey.
+  Definition t := ClauseId.
+  Definition eq_dec := Id.eq_dec.
+End ClauseIdKey.
 
 Definition clause_pointer_eq_dec (l r : ClausePointer) : {l = r} + {l <> r}.
 Proof.
-  decide equality; apply Nat.eq_dec.
+  decide equality; apply Id.eq_dec.
 Defined.
 
 Module ClausePointerElement.
@@ -97,7 +103,7 @@ Module ClauseValue.
   Definition t := Clause.
 End ClauseValue.
 
-Module ClauseStore := Map.Make VarKey ClauseValue.
+Module ClauseStore := Map.Make ClauseIdKey ClauseValue.
 
 Record State := {
   state_trail : Trail;
@@ -125,10 +131,10 @@ Definition literal_var (l : Literal) : Var :=
   end.
 
 Definition var_is_assigned (m : Model) (v : Var) : bool :=
-  existsb (fun l => Nat.eqb (literal_var l) v) m.
+  existsb (fun l => Id.eqb (literal_var l) v) m.
 
 Definition literal_value (m : Model) (l : Literal) : option bool :=
-  match find (fun l' => Nat.eqb (literal_var l') (literal_var l)) m with
+  match find (fun l' => Id.eqb (literal_var l') (literal_var l)) m with
   | None => None
   | Some (Pos _) =>
       match l with Pos _ => Some true | Neg _ => Some false end
@@ -163,7 +169,7 @@ Fixpoint find_different_var (v : Var) (ls : list Literal) : option Literal :=
   match ls with
   | [] => None
   | l :: ls' =>
-      if Nat.eqb v (literal_var l) then find_different_var v ls' else Some l
+      if Id.eqb v (literal_var l) then find_different_var v ls' else Some l
   end.
 
 (* Is [c] satisfied? falsified? otherwise watch an additional literal *)
@@ -312,10 +318,10 @@ Fixpoint pop_to_decision (learned : Clause) (trail : Trail) : Trail :=
   end.
 
 Definition fresh_clause_id (s : State) : ClauseId :=
-  S (fold_right Nat.max 0 (ClauseStore.keys s.(state_clauses))).
+  Id.fresh (ClauseStore.keys s.(state_clauses)).
 
 Definition fresh_learned_clause_id (s : State) : ClauseId :=
-  S (fold_right Nat.max 0 (ClauseStore.keys s.(state_learned))).
+  Id.fresh (ClauseStore.keys s.(state_learned)).
 
 Variant clause_destination := OriginalClause | LearnedClause.
 
