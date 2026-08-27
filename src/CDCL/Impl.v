@@ -307,6 +307,48 @@ Definition fresh_learned_clause_id (s : State) : ClauseId :=
 
 Variant clause_destination := OriginalClause | LearnedClause.
 
+(* Insert a clause which is already present in one of the clause stores into
+   the derived watched/pending state. *)
+Definition index_clause (pointer : ClausePointer) (s : State) (c : Clause)
+    : progress_result :=
+  let '(satisfied, undecided) := scan_clause_once s.(state_trail) c in
+  if orb satisfied (clause_has_opposite_literals c) then
+    Progress s
+  else
+    match undecided with
+    | [] =>
+        Conflict
+          {| state_trail := s.(state_trail);
+             state_clauses := s.(state_clauses);
+             state_learned := s.(state_learned);
+             state_watched := s.(state_watched);
+             state_falsified := pointer :: s.(state_falsified);
+             state_pending := s.(state_pending) |}
+          c
+    | l :: undecided' =>
+        match find_different_var (literal_var l) undecided' with
+        | None =>
+            Progress
+              {| state_trail := s.(state_trail);
+                 state_clauses := s.(state_clauses);
+                 state_learned := s.(state_learned);
+                 state_watched :=
+                   ClauseMap.add (literal_var l) pointer s.(state_watched);
+                 state_falsified := s.(state_falsified);
+                 state_pending := (l, pointer) :: s.(state_pending) |}
+        | Some l' =>
+            Progress
+              {| state_trail := s.(state_trail);
+                 state_clauses := s.(state_clauses);
+                 state_learned := s.(state_learned);
+                 state_watched :=
+                   ClauseMap.add (literal_var l') pointer
+                     (ClauseMap.add (literal_var l) pointer s.(state_watched));
+                 state_falsified := s.(state_falsified);
+                 state_pending := s.(state_pending) |}
+        end
+    end.
+
 Definition add_clause_to (destination : clause_destination)
     (s : State) (c : Clause) : progress_result :=
   let ci :=
@@ -379,6 +421,46 @@ Definition add_clause : State -> Clause -> progress_result :=
 
 Definition add_learned : State -> Clause -> progress_result :=
   add_clause_to LearnedClause.
+
+Fixpoint reindex_clauses (pointer : ClauseId -> ClausePointer)
+    (store : ClauseStore.t) (ids : list ClauseId) (s : State)
+    : progress_result :=
+  match ids with
+  | [] => Progress s
+  | ci :: ids' =>
+      match ClauseStore.find ci store with
+      | None => reindex_clauses pointer store ids' s
+      | Some c =>
+          match index_clause (pointer ci) s c with
+          | Progress s' => reindex_clauses pointer store ids' s'
+          | Conflict s' cause => Conflict s' cause
+          end
+      end
+  end.
+
+Definition backtrack (conflict : State * Clause) : option progress_result :=
+  let '(s, cause) := conflict in
+  match analyze_conflict s cause with
+  | None => None
+  | Some learned =>
+      let reset :=
+        {| state_trail := [];
+           state_clauses := s.(state_clauses);
+           state_learned := s.(state_learned);
+           state_watched := ClauseMap.empty;
+           state_falsified := [];
+           state_pending := [] |} in
+      match reindex_clauses Source s.(state_clauses)
+          (ClauseStore.keys s.(state_clauses)) reset with
+      | Conflict s' cause' => Some (Conflict s' cause')
+      | Progress originals_indexed =>
+          match reindex_clauses Learned s.(state_learned)
+              (ClauseStore.keys s.(state_learned)) originals_indexed with
+          | Conflict s' cause' => Some (Conflict s' cause')
+          | Progress all_indexed => Some (add_learned all_indexed learned)
+          end
+      end
+  end.
 
 Definition finish_progress (s : State) : progress_result :=
   match s.(state_falsified) with
