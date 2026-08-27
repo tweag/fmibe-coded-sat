@@ -1,0 +1,10 @@
+(rocq.extraction
+ (prelude Extraction)
+ (extracted_files sat.ml sat.mli)
+ (theories FMV Stdlib))
+
+(library
+ (name fmibe_app)
+ (wrapped false)
+ (modules sat dimacs_parser)
+ (libraries dolmen.dimacs dolmen.std))

@@ -35,8 +35,11 @@
         opamScope = opam-nix.lib.${system}.queryToScope {
           repos = [ opam-repository ];
         } {
+          cmdliner = "*";
+          dolmen = "*";
           dune = "*";
           ocaml-base-compiler = "*";
+          ocaml-config = "*";
           rocq-prover = "*";
           rocq-stdlib = "*";
         };
@@ -54,6 +57,8 @@
           packages = [
             pkgs.codex
             pkgs.git
+            opamScope.cmdliner
+            opamScope.dolmen
             opamScope.dune
             opamScope.ocaml-base-compiler
             opamScope.rocq-prover

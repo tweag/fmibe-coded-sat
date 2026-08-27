@@ -1,0 +1,4 @@
+(test
+ (name dimacs_parser_test)
+ (modules dimacs_parser_test)
+ (libraries fmibe_app))
