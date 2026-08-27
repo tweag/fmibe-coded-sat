@@ -299,6 +299,18 @@ Definition analyze_conflict (s : State) (_conflict : Clause) : option Clause :=
   | learned => Some learned
   end.
 
+(* Drop the most recent part of the trail, including the first decision whose
+   opposite occurs in the learned clause.  Since trails are newest-first, the
+   result is the older prefix to which search should backtrack. *)
+Fixpoint pop_to_decision (learned : Clause) (trail : Trail) : Trail :=
+  match trail with
+  | [] => []
+  | Decision l :: trail' =>
+      if in_dec literal_eq_dec (opposite_literal l) learned then trail'
+      else pop_to_decision learned trail'
+  | Propagation _ _ :: trail' => pop_to_decision learned trail'
+  end.
+
 Definition fresh_clause_id (s : State) : ClauseId :=
   S (fold_right Nat.max 0 (ClauseStore.keys s.(state_clauses))).
 
@@ -443,8 +455,9 @@ Definition backtrack (conflict : State * Clause) : option progress_result :=
   match analyze_conflict s cause with
   | None => None
   | Some learned =>
+      let trail := pop_to_decision learned s.(state_trail) in
       let reset :=
-        {| state_trail := [];
+        {| state_trail := trail;
            state_clauses := s.(state_clauses);
            state_learned := s.(state_learned);
            state_watched := ClauseMap.empty;
