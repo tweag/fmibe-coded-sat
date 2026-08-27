@@ -2391,6 +2391,152 @@ Inductive delay_returns {A : Type} : Delay A -> A -> Prop :=
 Definition clause_falsified_by_model (m : Model) (c : Clause) : Prop :=
   forall l, In l c -> literal_value m l = Some false.
 
+Lemma found_clause_implied : forall s pointer c,
+  state_invariant s ->
+  find_clause pointer s = Some c ->
+  clause_implied_by_store s.(state_clauses) c.
+Proof.
+  intros s [ci|ci] c Hinv Hfind.
+  - intros m Hstore. apply (Hstore ci c). exact Hfind.
+  - exact (proj2 Hinv ci c Hfind).
+Qed.
+
+Lemma falsified_clause_spec : forall m c,
+  Is_true (negb (existsb (literal_is_true m) c)) ->
+  filter (literal_is_undecided m) c = [] ->
+  clause_falsified_by_model m c.
+Proof.
+  intros m c Hfalse Hdecided l Hin.
+  assert (literal_is_true m l = false) as Hnottrue.
+  { destruct (literal_is_true m l) eqn:Htrue; [|reflexivity].
+    exfalso. apply Is_true_eq_true in Hfalse.
+    apply Bool.negb_true_iff in Hfalse.
+    assert (existsb (literal_is_true m) c = true).
+    { apply existsb_exists. now exists l. }
+    congruence. }
+  assert (literal_is_undecided m l = false) as Hnotundecided.
+  { destruct (literal_is_undecided m l) eqn:Hundecided; [|reflexivity].
+    assert (In l (filter (literal_is_undecided m) c)).
+    { apply filter_In. now split. }
+    rewrite Hdecided in H. contradiction. }
+  unfold literal_is_true, literal_is_undecided in Hnottrue, Hnotundecided.
+  destruct (literal_value m l) as [[|]|]; try discriminate; reflexivity.
+Qed.
+
+Lemma finish_progress_conflict : forall s s' c,
+  state_invariant s ->
+  finish_progress s = Conflict s' c ->
+  clause_implied_by_store s.(state_clauses) c /\
+  clause_falsified_by_model s'.(state_trail) c.
+Proof.
+  intros s s' c Hinv Hfinish. unfold finish_progress in Hfinish.
+  destruct (proj1 Hinv) as [_ [Hfalsified _]].
+  destruct s.(state_falsified) as [|pointer fals] eqn:Hfals;
+    [discriminate|].
+  destruct (find_clause pointer s) as [body|] eqn:Hfind.
+  2:{ destruct (Hfalsified pointer (or_introl eq_refl))
+        as [body [Hlookup _]].
+      rewrite Hfind in Hlookup. discriminate. }
+  injection Hfinish as <- <-.
+  split.
+  - now apply found_clause_implied with (pointer := pointer).
+  - destruct (Hfalsified pointer (or_introl eq_refl))
+      as [body' [Hfind' [Hfalse Hdecided]]].
+    rewrite Hfind in Hfind'. injection Hfind' as <-.
+    now apply falsified_clause_spec.
+Qed.
+
+Lemma progress_state_inv_nonfalse : forall s,
+  (forall l pointer pending,
+    s.(state_pending) = (l, pointer) :: pending ->
+    literal_value s.(state_trail) l <> Some false) ->
+  state_invariant s ->
+  state_invariant (progress_state s).
+Proof.
+  intros [m clauses learned cm fals pending] Hnonfalse Hinv.
+  unfold progress_state. cbn [state_pending state_trail state_clauses
+    state_learned state_watched state_falsified].
+  destruct pending as [|[l pointer] pending].
+  - destruct (hd_error (ClauseMap.keys cm)) as [v|] eqn:Hhead.
+    + apply set_lit_inv; [|exact Hinv].
+      apply not_InL_literal_undecided.
+      assert (In v (ClauseMap.keys cm)) as Hkey.
+      { destruct (ClauseMap.keys cm) as [|x xs] eqn:Hkeys;
+          [discriminate|]. injection Hhead as <-. now left. }
+      apply <- ClauseMap.keys_complete in Hkey.
+      destruct (ClauseMap.find v cm) as [|d ds] eqn:Hfind;
+        [contradiction|].
+      destruct Hinv as [[_ [_ [Hwatch _]]] _].
+      assert (In d (ClauseMap.find v cm)) as Hin by (rewrite Hfind; now left).
+      destruct (Hwatch v d Hin) as [body [_ [Hnotin _]]]. exact Hnotin.
+    + exact Hinv.
+  - pose proof (proj1 Hinv) as Hlookup.
+    destruct Hlookup as [_ [_ [_ [_ [_ [_ [Hpending _]]]]]]].
+    destruct (Hpending l pointer (or_introl eq_refl))
+      as [c [Hfind [Hneeds Hnoopp]]].
+    change (find_clause_in clauses learned pointer = Some c) in Hfind.
+    destruct (literal_value m l) as [[|]|] eqn:Hvalue.
+    + eapply resolve_true_pending_inv; [exact Hfind| |exact Hinv].
+      unfold literal_is_true. now rewrite Hvalue.
+    + exfalso.
+      eapply (Hnonfalse l pointer pending); [reflexivity|exact Hvalue].
+    + eapply set_pending_inv; [exact Hfind| |exact Hinv].
+      unfold literal_is_undecided. now rewrite Hvalue.
+Qed.
+
+Lemma progress_conflict : forall s s' c,
+  state_invariant s ->
+  progress s = Conflict s' c ->
+  clause_implied_by_store s.(state_clauses) c /\
+  clause_falsified_by_model s'.(state_trail) c.
+Proof.
+  intros s s' c Hinv Hprogress. unfold progress in Hprogress.
+  destruct s.(state_pending) as [|[l pointer] pending] eqn:Hpending.
+  - pose proof (progress_state_inv_nonfalse s) as Hnext.
+    assert (state_invariant (progress_state s)) as Hnextinv.
+    { apply Hnext; [|exact Hinv].
+      intros l pointer pending Hfalse. rewrite Hpending in Hfalse. discriminate. }
+    pose proof (finish_progress_conflict (progress_state s) s' c
+      Hnextinv Hprogress) as [Himplied Hfalse].
+    split; [|exact Hfalse].
+    rewrite progress_state_clauses in Himplied. exact Himplied.
+  - pose proof (proj1 Hinv) as Hlookup.
+    destruct Hlookup as [_ [_ [_ [_ [_ [_ [Hpendinginv _]]]]]]].
+    assert (In (l, pointer) s.(state_pending)) as Hinpending.
+    { rewrite Hpending. now left. }
+    destruct (Hpendinginv l pointer Hinpending)
+      as [body [Hfind [Hneeds Hnoopp]]].
+    destruct (literal_value s.(state_trail) l) as [[|]|] eqn:Hvalue.
+    + assert (state_invariant (progress_state s)) as Hnextinv.
+      { apply progress_state_inv_nonfalse; [|exact Hinv].
+        intros l' pointer' pending' Heq.
+        rewrite Hpending in Heq. injection Heq as <- <- <-.
+        congruence. }
+      pose proof (finish_progress_conflict (progress_state s) s' c
+        Hnextinv Hprogress) as [Himplied Hfalse].
+      split; [|exact Hfalse].
+      rewrite progress_state_clauses in Himplied. exact Himplied.
+    + change (match find_clause pointer s with
+        | Some clause => Conflict s clause
+        | None => Conflict s []
+        end = Conflict s' c) in Hprogress.
+      rewrite Hfind in Hprogress.
+      injection Hprogress as <- <-. split.
+      * now apply found_clause_implied with (pointer := pointer).
+      * intros x Hxc. destruct (literal_eq_dec x l) as [->|Hneq].
+        -- exact Hvalue.
+        -- exact (proj2 Hneeds x Hxc Hneq).
+    + assert (state_invariant (progress_state s)) as Hnextinv.
+      { apply progress_state_inv_nonfalse; [|exact Hinv].
+        intros l' pointer' pending' Heq.
+        rewrite Hpending in Heq. injection Heq as <- <- <-.
+        congruence. }
+      pose proof (finish_progress_conflict (progress_state s) s' c
+        Hnextinv Hprogress) as [Himplied Hfalse].
+      split; [|exact Hfalse].
+      rewrite progress_state_clauses in Himplied. exact Himplied.
+Qed.
+
 Lemma trail_consistent_tail : forall entry trail,
   trail_consistent (entry :: trail) -> trail_consistent trail.
 Proof.
@@ -2605,7 +2751,9 @@ Lemma rush_result_model_sound : forall s result,
   match result with
   | inl s' =>
       satisfies_clause_store (complete_model s'.(state_trail)) s.(state_clauses)
-  | inr _ => True
+  | inr (s', cause) =>
+      clause_implied_by_store s.(state_clauses) cause /\
+      clause_falsified_by_model s'.(state_trail) cause
   end.
 Proof.
   intros s result Hinv Hfalsified Hreturns.
@@ -2617,7 +2765,7 @@ Proof.
     + injection Hrush as ->. now apply terminal_state_satisfies_clauses.
     + destruct (progress s) as [s'|s' cause] eqn:Hprogress;
         [discriminate|].
-      injection Hrush as ->. exact I.
+      injection Hrush as ->. now apply progress_conflict with (s := s).
   - rewrite rush_unfold in Hrush.
     destruct (ClauseMap.keys s.(state_watched)) as [|v vs] eqn:Hkeys;
       cbn [is_empty] in Hrush; [discriminate|].
@@ -2629,8 +2777,12 @@ Proof.
     assert (Hfalsified' : s'.(state_falsified) = []) by
       (now apply progress_falsified_empty with (s := s)).
     specialize (IH s' Hinv' Hfalsified' eq_refl).
-    destruct x as [final|[latest cause]]; [|exact I].
-    rewrite <- (progress_clauses s s' Hprogress). exact IH.
+    destruct x as [final|[latest cause]].
+    + rewrite <- (progress_clauses s s' Hprogress). exact IH.
+    + destruct IH as [Himplied Hfalsifiedcause]. split.
+      * rewrite (progress_clauses s s' Hprogress) in Himplied.
+        exact Himplied.
+      * exact Hfalsifiedcause.
 Qed.
 
 Theorem rush_model_sound : forall s final,
@@ -2642,6 +2794,18 @@ Theorem rush_model_sound : forall s final,
 Proof.
   intros s final Hinv Hfalsified Hreturns.
   exact (rush_result_model_sound s (inl final) Hinv Hfalsified Hreturns).
+Qed.
+
+Theorem rush_conflict_sound : forall s final cause,
+  state_invariant s ->
+  s.(state_falsified) = [] ->
+  delay_returns (rush s) (inr (final, cause)) ->
+  clause_implied_by_store s.(state_clauses) cause /\
+  clause_falsified_by_model final.(state_trail) cause.
+Proof.
+  intros s final cause Hinv Hfalsified Hreturns.
+  exact (rush_result_model_sound s (inr (final, cause))
+    Hinv Hfalsified Hreturns).
 Qed.
 
 Theorem add_clause_inv : forall s c s',
