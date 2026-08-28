@@ -1,12 +1,6 @@
 open Cmdliner
 
-let empty_state =
-  { Sat.state_trail = [];
-    state_clauses = Sat.ClauseStore.empty;
-    state_learned = Sat.ClauseStore.empty;
-    state_watched = Sat.ClauseMap.empty;
-    state_falsified = [];
-    state_pending = [] }
+let empty_state = Sat.empty_state
 
 let rec add_clauses state = function
   | [] -> Some state
@@ -15,14 +9,13 @@ let rec add_clauses state = function
       | Sat.Progress state' -> add_clauses state' clauses
       | Sat.Conflict _ -> None
 
-let print_literal = function
-  | Sat.Pos variable -> Printf.printf "%d " (Sat.Id.to_nat variable)
-  | Sat.Neg variable -> Printf.printf "-%d " (Sat.Id.to_nat variable)
+let string_of_literal = function
+  | Sat.Pos variable -> string_of_int (Sat.Id.to_nat variable)
+  | Sat.Neg variable -> Printf.sprintf "-%d" (Sat.Id.to_nat variable)
 
 let print_model model =
   print_endline "SAT!";
-  List.iter print_literal model;
-  print_newline ()
+  print_endline (String.concat " " (List.map string_of_literal model))
 
 let solve_problem problem =
   match add_clauses empty_state problem with

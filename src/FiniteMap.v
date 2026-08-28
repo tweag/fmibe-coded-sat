@@ -110,6 +110,21 @@ Module RawMake (Key : DecidableType) (Value : Monoid).
     exact f_empty.
   Defined.
 
+  (* Update one existing binding.  Requiring the unit to remain the unit means
+     that keeping the old support is sound even when [k] was absent. *)
+  Definition map_at (k : Key.t) (f : Value.t -> Value.t)
+      (f_empty : f Value.empty = Value.empty) (m : t) : t.
+  Proof.
+    refine
+      {| lookup := fun k' =>
+           if Key.eq_dec k k' then f (m.(lookup) k') else m.(lookup) k';
+         support := m.(support) |}.
+    split; [exact (proj1 m.(support_spec))|].
+    intros k' Hnotin. destruct (Key.eq_dec k k') as [->|Hneq].
+    - rewrite (proj2 m.(support_spec) k' Hnotin). exact f_empty.
+    - now apply (proj2 m.(support_spec)).
+  Defined.
+
   Lemma find_empty : forall k, find k empty = Value.empty.
   Proof. reflexivity. Qed.
 

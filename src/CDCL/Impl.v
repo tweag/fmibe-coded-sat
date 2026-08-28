@@ -165,11 +165,131 @@ Module ClauseMap.
 
   Definition remove (v : Var) (m : t) : t := Buckets.remove v m.
 
+  (* Detach one literal's watch list while preserving the watch list for the
+     opposite literal.  The detached clauses are scanned after the literal is
+     falsified and either put back or moved to another literal. *)
+  Definition clear_pos (w : WatchedClauses) : WatchedClauses :=
+    {| pos := []; neg := w.(neg) |}.
+
+  Definition clear_neg (w : WatchedClauses) : WatchedClauses :=
+    {| pos := w.(pos); neg := [] |}.
+
+  Definition clear_literal (l : Literal) (m : t) : t :=
+    match l with
+    | Pos v => Buckets.map_at v clear_pos eq_refl m
+    | Neg v => Buckets.map_at v clear_neg eq_refl m
+    end.
+
+  Definition clear_falsified (l : Literal) (m : t) : t :=
+    clear_literal (opposite_literal l) m.
+
+  Lemma find_literal_clear_literal : forall l m,
+    find_literal l (clear_literal l m) = [].
+  Proof.
+    intros [v|v] m.
+    - unfold find_literal, clear_literal, find_pos, Buckets.find,
+        Buckets.map_at. cbn.
+      destruct (VarKey.eq_dec v v); [reflexivity|contradiction].
+    - unfold find_literal, clear_literal, find_neg, Buckets.find,
+        Buckets.map_at. cbn.
+      destruct (VarKey.eq_dec v v); [reflexivity|contradiction].
+  Qed.
+
   Definition find_falsified (l : Literal) (m : t) : list ClausePointer :=
     match l with
     | Pos v => find_neg v m
     | Neg v => find_pos v m
     end.
+
+  Lemma find_falsified_clear_falsified : forall l m,
+    find_falsified l (clear_falsified l m) = [].
+  Proof.
+    intros [v|v] m.
+    - change (find_literal (Neg v) (clear_literal (Neg v) m) = []).
+      apply find_literal_clear_literal.
+    - change (find_literal (Pos v) (clear_literal (Pos v) m) = []).
+      apply find_literal_clear_literal.
+  Qed.
+
+  Lemma find_pos_clear_pos : forall m v v',
+    find_pos v' (clear_literal (Pos v) m) =
+      if VarKey.eq_dec v v' then [] else find_pos v' m.
+  Proof.
+    intros. unfold find_pos, clear_literal, Buckets.find, Buckets.map_at.
+    cbn. destruct (VarKey.eq_dec v v'); reflexivity.
+  Qed.
+
+  Lemma find_neg_clear_pos : forall m v v',
+    find_neg v' (clear_literal (Pos v) m) = find_neg v' m.
+  Proof.
+    intros. unfold find_neg, clear_literal, Buckets.find, Buckets.map_at.
+    cbn. destruct (VarKey.eq_dec v v'); reflexivity.
+  Qed.
+
+  Lemma find_pos_clear_neg : forall m v v',
+    find_pos v' (clear_literal (Neg v) m) = find_pos v' m.
+  Proof.
+    intros. unfold find_pos, clear_literal, Buckets.find, Buckets.map_at.
+    cbn. destruct (VarKey.eq_dec v v'); reflexivity.
+  Qed.
+
+  Lemma find_neg_clear_neg : forall m v v',
+    find_neg v' (clear_literal (Neg v) m) =
+      if VarKey.eq_dec v v' then [] else find_neg v' m.
+  Proof.
+    intros. unfold find_neg, clear_literal, Buckets.find, Buckets.map_at.
+    cbn. destruct (VarKey.eq_dec v v'); reflexivity.
+  Qed.
+
+  Lemma find_clear_literal_in : forall m l v ci,
+    In ci (find v (clear_literal l m)) -> In ci (find v m).
+  Proof.
+    intros m [w|w] v ci Hin; unfold find in *.
+    - rewrite find_pos_clear_pos, find_neg_clear_pos in Hin.
+      destruct (VarKey.eq_dec w v).
+      + apply in_or_app. right. now simpl in Hin.
+      + exact Hin.
+    - rewrite find_pos_clear_neg, find_neg_clear_neg in Hin.
+      destruct (VarKey.eq_dec w v).
+      + apply in_or_app. left. now rewrite app_nil_r in Hin.
+      + exact Hin.
+  Qed.
+
+  Lemma find_clear_literal_other : forall m l v,
+    literal_var l <> v -> find v (clear_literal l m) = find v m.
+  Proof.
+    intros m [w|w] v Hneq; unfold find.
+    - rewrite find_pos_clear_pos, find_neg_clear_pos.
+      destruct (VarKey.eq_dec w v); [contradiction|reflexivity].
+    - rewrite find_pos_clear_neg, find_neg_clear_neg.
+      destruct (VarKey.eq_dec w v); [contradiction|reflexivity].
+  Qed.
+
+  Lemma find_clear_pos_eq : forall m v,
+    find v (clear_literal (Pos v) m) = find_neg v m.
+  Proof.
+    intros. unfold find. rewrite find_pos_clear_pos, find_neg_clear_pos.
+    destruct (VarKey.eq_dec v v); [reflexivity|contradiction].
+  Qed.
+
+  Lemma find_clear_neg_eq : forall m v,
+    find v (clear_literal (Neg v) m) = find_pos v m.
+  Proof.
+    intros. unfold find. rewrite find_pos_clear_neg, find_neg_clear_neg.
+    destruct (VarKey.eq_dec v v); [now rewrite app_nil_r|contradiction].
+  Qed.
+
+  Lemma flat_map_clear_other : forall ks m l,
+    ~ In (literal_var l) ks ->
+    flat_map (fun v => find v (clear_literal l m)) ks =
+    flat_map (fun v => find v m) ks.
+  Proof.
+    intros ks. induction ks as [|v ks IH]; intros m l Hnotin; simpl.
+    - reflexivity.
+    - rewrite find_clear_literal_other.
+      + f_equal. apply IH. intros Hin. apply Hnotin. now right.
+      + intros Heq. apply Hnotin. now left.
+  Qed.
 
   Lemma find_falsified_in : forall l m ci,
     In ci (find_falsified l m) -> In ci (find (literal_var l) m).
@@ -521,6 +641,79 @@ Module ClauseMap.
         rewrite (Buckets.lookup_notin_support m v Hnotin). reflexivity. }
       rewrite Hempty. simpl. lia.
   Qed.
+
+  Lemma card_of_clear_literal : forall m x l,
+    card_of x (clear_literal l m) +
+      count_occ clause_pointer_eq_dec (find_literal l m) x = card_of x m.
+  Proof.
+    intros m x [v|v]; unfold card_of, elements.
+    - change
+        (count_occ clause_pointer_eq_dec
+           (flat_map (fun w => find w (clear_literal (Pos v) m))
+             (Buckets.keys m)) x +
+         count_occ clause_pointer_eq_dec (find_pos v m) x =
+         count_occ clause_pointer_eq_dec
+           (flat_map (fun w => find w m) (Buckets.keys m)) x).
+      destruct (in_dec VarKey.eq_dec v (Buckets.keys m)) as [Hin|Hnotin].
+      + apply in_split in Hin as [before [after Hkeys]].
+        pose proof (proj1 (Buckets.support_spec m)) as Hnodup.
+        change (NoDup (Buckets.keys m)) in Hnodup.
+        rewrite Hkeys in Hnodup |- *.
+        pose proof (NoDup_remove_2 _ _ _ Hnodup) as Hnotinrest.
+        assert (~ In v before) as Hbefore.
+        { intros H. apply Hnotinrest. apply in_or_app. now left. }
+        assert (~ In v after) as Hafter.
+        { intros H. apply Hnotinrest. apply in_or_app. now right. }
+        rewrite !flat_map_app. cbn [flat_map].
+        erewrite flat_map_clear_other by exact Hbefore.
+        erewrite flat_map_clear_other by exact Hafter.
+        rewrite find_clear_pos_eq. unfold find. rewrite !count_occ_app.
+        set (a := count_occ clause_pointer_eq_dec
+          (flat_map (fun w => find_pos w m ++ find_neg w m) before) x).
+        set (b := count_occ clause_pointer_eq_dec
+          (flat_map (fun w => find_pos w m ++ find_neg w m) after) x).
+        set (p := count_occ clause_pointer_eq_dec (find_pos v m) x).
+        set (n := count_occ clause_pointer_eq_dec (find_neg v m) x).
+        change (a + (n + b) + p = a + (p + n + b)). lia.
+      + rewrite flat_map_clear_other by exact Hnotin.
+        assert (Hempty : find_pos v m = []).
+        { unfold find_pos, Buckets.find.
+          rewrite (Buckets.lookup_notin_support m v Hnotin). reflexivity. }
+        now rewrite Hempty.
+    - change
+        (count_occ clause_pointer_eq_dec
+           (flat_map (fun w => find w (clear_literal (Neg v) m))
+             (Buckets.keys m)) x +
+         count_occ clause_pointer_eq_dec (find_neg v m) x =
+         count_occ clause_pointer_eq_dec
+           (flat_map (fun w => find w m) (Buckets.keys m)) x).
+      destruct (in_dec VarKey.eq_dec v (Buckets.keys m)) as [Hin|Hnotin].
+      + apply in_split in Hin as [before [after Hkeys]].
+        pose proof (proj1 (Buckets.support_spec m)) as Hnodup.
+        change (NoDup (Buckets.keys m)) in Hnodup.
+        rewrite Hkeys in Hnodup |- *.
+        pose proof (NoDup_remove_2 _ _ _ Hnodup) as Hnotinrest.
+        assert (~ In v before) as Hbefore.
+        { intros H. apply Hnotinrest. apply in_or_app. now left. }
+        assert (~ In v after) as Hafter.
+        { intros H. apply Hnotinrest. apply in_or_app. now right. }
+        rewrite !flat_map_app. cbn [flat_map].
+        erewrite flat_map_clear_other by exact Hbefore.
+        erewrite flat_map_clear_other by exact Hafter.
+        rewrite find_clear_neg_eq. unfold find. rewrite !count_occ_app.
+        set (a := count_occ clause_pointer_eq_dec
+          (flat_map (fun w => find_pos w m ++ find_neg w m) before) x).
+        set (b := count_occ clause_pointer_eq_dec
+          (flat_map (fun w => find_pos w m ++ find_neg w m) after) x).
+        set (p := count_occ clause_pointer_eq_dec (find_pos v m) x).
+        set (n := count_occ clause_pointer_eq_dec (find_neg v m) x).
+        change (a + (p + b) + n = a + (p + n + b)). lia.
+      + rewrite flat_map_clear_other by exact Hnotin.
+        assert (Hempty : find_neg v m = []).
+        { unfold find_neg, Buckets.find.
+          rewrite (Buckets.lookup_notin_support m v Hnotin). reflexivity. }
+        now rewrite Hempty.
+  Qed.
   Lemma card_of_unique : forall m x v v',
     card_of x m = 1 -> In x (find v m) -> In x (find v' m) -> v = v'.
   Proof.
@@ -603,6 +796,14 @@ Record State := {
   state_pending : Pending;
 }.
 
+Definition empty_state : State :=
+  {| state_trail := [];
+     state_clauses := ClauseStore.empty;
+     state_learned := ClauseStore.empty;
+     state_watched := ClauseMap.empty;
+     state_falsified := [];
+     state_pending := [] |}.
+
 Definition find_clause_in (clauses learned : ClauseStore.t)
     (ci : ClausePointer) : option Clause :=
   match ci with
@@ -655,21 +856,35 @@ Fixpoint find_different_var (v : Var) (ls : list Literal) : option Literal :=
       if Id.eqb v (literal_var l) then find_different_var v ls' else Some l
   end.
 
-(* Is [c] satisfied? falsified? otherwise watch an additional literal *)
-Definition scan_clause (m : Model) (ci : ClausePointer) (c : Clause)
+Definition restore_detached_watch (falsified_watch : Literal)
+    (ci : ClausePointer) (c : Clause) (cm : ClauseMap.t) : ClauseMap.t :=
+  match find_different_var (literal_var falsified_watch) c with
+  | Some _ => ClauseMap.add falsified_watch ci cm
+  | None => cm
+  end.
+
+(* Scan a clause after [falsified_watch] has been detached.  If the clause is
+   already decided, put that watch back so a non-unit clause retains two
+   watches.  A physical unit clause deliberately loses its sole watch after
+   its root-level propagation. *)
+Definition scan_clause (m : Model) (falsified_watch : Literal)
+    (ci : ClausePointer) (c : Clause)
     (cm : ClauseMap.t) (fals : list ClausePointer) : scan_result :=
   let '(satisfied, undecided) := scan_clause_once m c in
   if satisfied then
-      clause_decided cm fals
+      clause_decided (restore_detached_watch falsified_watch ci c cm) fals
   else
     match undecided with
-    | [] => clause_decided cm (ci :: fals)
+    | [] =>
+        clause_decided (restore_detached_watch falsified_watch ci c cm)
+          (ci :: fals)
     | l :: undecided' =>
         match find_different_var (literal_var l) undecided' with
         | None =>
             if in_dec clause_pointer_eq_dec ci
                 (ClauseMap.find (literal_var l) cm) then
-              propagate_literal l cm
+              propagate_literal l
+                (restore_detached_watch falsified_watch ci c cm)
             else
               propagate_literal l
                 (ClauseMap.add l ci cm)
@@ -681,11 +896,12 @@ Definition scan_clause (m : Model) (ci : ClausePointer) (c : Clause)
         end
     end.
 
-Definition propagate (ci : ClausePointer) (s : State) : State :=
+Definition propagate (falsified_watch : Literal) (ci : ClausePointer)
+    (s : State) : State :=
   match find_clause ci s with
   | None => s
   | Some c =>
-    match scan_clause s.(state_trail) ci c s.(state_watched)
+    match scan_clause s.(state_trail) falsified_watch ci c s.(state_watched)
         s.(state_falsified) with
     | propagate_literal l cm =>
       {| state_trail := s.(state_trail);
@@ -712,13 +928,14 @@ Definition propagate (ci : ClausePointer) (s : State) : State :=
 Definition set_trail_entry (entry : TrailEntry) (s : State) : State :=
   let l := trail_literal entry in
   let watched := ClauseMap.find_falsified l s.(state_watched) in
-  let cm := ClauseMap.remove (literal_var l) s.(state_watched) in
+  let falsified_watch := opposite_literal l in
+  let cm := ClauseMap.clear_falsified l s.(state_watched) in
   let s' := {| state_trail := entry :: s.(state_trail);
       state_clauses := s.(state_clauses); state_watched := cm;
       state_learned := s.(state_learned);
       state_falsified := s.(state_falsified);
       state_pending := s.(state_pending) |} in
-  fold_left (fun s c => propagate c s) watched s'.
+  fold_left (fun s c => propagate falsified_watch c s) watched s'.
 
 Definition set_lit (l : Literal) (s : State) : State :=
   set_trail_entry (Decision l) s.
@@ -726,6 +943,25 @@ Definition set_lit (l : Literal) (s : State) : State :=
 Definition set_propagated_lit (l : Literal) (cause : ClausePointer) (s : State)
     : State :=
   set_trail_entry (Propagation l cause) s.
+
+Fixpoint find_undecided_var (m : Model) (vs : list Var) : option Var :=
+  match vs with
+  | [] => None
+  | v :: vs' =>
+      if var_is_assigned m v then find_undecided_var m vs' else Some v
+  end.
+
+Definition clause_store_vars (store : ClauseStore.t) : list Var :=
+  flat_map
+    (fun ci =>
+       match ClauseStore.find ci store with
+       | Some c => map literal_var c
+       | None => []
+       end)
+    (ClauseStore.keys store).
+
+Definition problem_vars (s : State) : list Var :=
+  clause_store_vars s.(state_clauses).
 
 (* Game plan: to progress the state:
    - If there is a pending propagation, assign its literal using its clause as
@@ -737,32 +973,20 @@ Definition set_propagated_lit (l : Literal) (cause : ClausePointer) (s : State)
 Definition progress_state (s : State) : State :=
   match s.(state_pending) with
   | (l, c) :: pending =>
+      let base :=
+        {| state_trail := s.(state_trail);
+           state_clauses := s.(state_clauses);
+           state_learned := s.(state_learned);
+           state_watched := s.(state_watched);
+           state_falsified := s.(state_falsified);
+           state_pending := pending |} in
       match literal_value s.(state_trail) l with
-      | Some true =>
-        {| state_trail := s.(state_trail);
-           state_clauses := s.(state_clauses);
-           state_learned := s.(state_learned);
-           state_watched := s.(state_watched);
-           state_falsified := s.(state_falsified);
-           state_pending := pending |}
-      | Some false =>
-        {| state_trail := s.(state_trail);
-           state_clauses := s.(state_clauses);
-           state_learned := s.(state_learned);
-           state_watched := s.(state_watched);
-           state_falsified := s.(state_falsified);
-           state_pending := pending |}
-      | None =>
-        set_propagated_lit l c
-          {| state_trail := s.(state_trail);
-             state_clauses := s.(state_clauses);
-             state_learned := s.(state_learned);
-             state_watched := s.(state_watched);
-             state_falsified := s.(state_falsified);
-             state_pending := pending |}
+      | Some _ => base
+      | None => set_propagated_lit l c base
       end
   | [] =>
-      match hd_error (ClauseMap.keys s.(state_watched)) with
+      match find_undecided_var s.(state_trail)
+          (problem_vars s) with
       | None => s (* All the literal have been decided so no progress can be made *)
       | Some v =>
           set_lit (Pos v) s
@@ -808,47 +1032,112 @@ Definition fresh_learned_clause_id (s : State) : ClauseId :=
 
 Variant clause_destination := OriginalClause | LearnedClause.
 
-(* Insert a clause which is already present in one of the clause stores into
-   the derived watched/pending state. *)
+(* Find the most recently assigned literal of [c], optionally ignoring one
+   variable.  Models are newest-first, so the first matching trail literal is
+   precisely the literal whose variable was assigned most recently.  We return
+   the literal as it occurs in the clause, since its polarity can differ from
+   the trail entry's polarity. *)
+Fixpoint find_literal_with_var (v : Var) (c : Clause) : option Literal :=
+  match c with
+  | [] => None
+  | l :: c' =>
+      if Id.eq_dec v (literal_var l) then Some l
+      else find_literal_with_var v c'
+  end.
+
+Fixpoint find_recent_clause_literal_except (excluded : option Var)
+    (m : Model) (c : Clause) : option Literal :=
+  match m with
+  | [] => None
+  | assigned :: m' =>
+      if match excluded with
+         | Some v => if Id.eq_dec v (literal_var assigned) then true else false
+         | None => false
+         end
+      then find_recent_clause_literal_except excluded m' c
+      else
+        match find_literal_with_var (literal_var assigned) c with
+        | Some l => Some l
+        | None => find_recent_clause_literal_except excluded m' c
+        end
+  end.
+
+Definition find_recent_clause_literal (m : Model) (c : Clause) : option Literal :=
+  find_recent_clause_literal_except None m c.
+
+Definition find_recent_different_clause_literal (v : Var)
+    (m : Model) (c : Clause) : option Literal :=
+  find_recent_clause_literal_except (Some v) m c.
+
+Definition install_watches (m : Model) (ci : ClausePointer)
+    (c : Clause) (cm : ClauseMap.t) : ClauseMap.t :=
+  let undecided := snd (scan_clause_once m c) in
+  match undecided with
+  | l :: undecided' =>
+      match find_different_var (literal_var l) undecided' with
+      | Some l' => ClauseMap.add l' ci (ClauseMap.add l ci cm)
+      | None =>
+          match find_recent_different_clause_literal (literal_var l) m c with
+          | Some l' => ClauseMap.add l' ci (ClauseMap.add l ci cm)
+          | None => cm
+          end
+      end
+  | [] =>
+      match find_recent_clause_literal m c with
+      | None => cm
+      | Some l =>
+          match find_recent_different_clause_literal (literal_var l) m c with
+          | Some l' => ClauseMap.add l' ci (ClauseMap.add l ci cm)
+          | None => cm
+          end
+      end
+  end.
+
 Definition index_clause (pointer : ClausePointer) (s : State) (c : Clause)
     : progress_result :=
   let '(satisfied, undecided) := scan_clause_once s.(state_trail) c in
-  if orb satisfied (clause_has_opposite_literals c) then
-    Progress s
+  if clause_has_opposite_literals c then Progress s
   else
-    match undecided with
-    | [] =>
-        Conflict
-          {| state_trail := s.(state_trail);
-             state_clauses := s.(state_clauses);
-             state_learned := s.(state_learned);
-             state_watched := s.(state_watched);
-             state_falsified := pointer :: s.(state_falsified);
-             state_pending := s.(state_pending) |}
-          c
-    | l :: undecided' =>
-        match find_different_var (literal_var l) undecided' with
-        | None =>
-            Progress
-              {| state_trail := s.(state_trail);
-                 state_clauses := s.(state_clauses);
-                 state_learned := s.(state_learned);
-                 state_watched :=
-                   ClauseMap.add l pointer s.(state_watched);
-                 state_falsified := s.(state_falsified);
-                 state_pending := (l, pointer) :: s.(state_pending) |}
-        | Some l' =>
-            Progress
-              {| state_trail := s.(state_trail);
-                 state_clauses := s.(state_clauses);
-                 state_learned := s.(state_learned);
-                 state_watched :=
-                   ClauseMap.add l' pointer
-                     (ClauseMap.add l pointer s.(state_watched));
-                 state_falsified := s.(state_falsified);
-                 state_pending := s.(state_pending) |}
-        end
-    end.
+    let cm := install_watches s.(state_trail) pointer c s.(state_watched) in
+    if satisfied then
+      Progress
+        {| state_trail := s.(state_trail);
+           state_clauses := s.(state_clauses);
+           state_learned := s.(state_learned);
+           state_watched := cm;
+           state_falsified := s.(state_falsified);
+           state_pending := s.(state_pending) |}
+    else
+      match undecided with
+      | [] =>
+          Conflict
+            {| state_trail := s.(state_trail);
+               state_clauses := s.(state_clauses);
+               state_learned := s.(state_learned);
+               state_watched := cm;
+               state_falsified := pointer :: s.(state_falsified);
+               state_pending := s.(state_pending) |}
+            c
+      | l :: undecided' =>
+          match find_different_var (literal_var l) undecided' with
+          | None =>
+              Progress
+                {| state_trail := s.(state_trail);
+                   state_clauses := s.(state_clauses);
+                   state_learned := s.(state_learned);
+                   state_watched := cm;
+                   state_falsified := s.(state_falsified);
+                   state_pending := (l, pointer) :: s.(state_pending) |}
+          | Some _ =>
+              Progress
+                {| state_trail := s.(state_trail);
+                   state_clauses := s.(state_clauses);
+                   state_learned := s.(state_learned);
+                   state_watched := cm;
+                   state_falsified := s.(state_falsified);
+                   state_pending := s.(state_pending) |}
+          end
+      end.
 
 Definition add_clause_to (destination : clause_destination)
     (s : State) (c : Clause) : progress_result :=
@@ -862,60 +1151,22 @@ Definition add_clause_to (destination : clause_destination)
     | OriginalClause => Source ci
     | LearnedClause => Learned ci
     end in
-  let clauses :=
-    match destination with
-    | OriginalClause => ClauseStore.add ci c s.(state_clauses)
-    | LearnedClause => s.(state_clauses)
-    end in
-  let learned :=
-    match destination with
-    | OriginalClause => s.(state_learned)
-    | LearnedClause => ClauseStore.add ci c s.(state_learned)
-    end in
   let base :=
     {| state_trail := s.(state_trail);
-       state_clauses := clauses;
-       state_learned := learned;
+       state_clauses :=
+         match destination with
+         | OriginalClause => ClauseStore.add ci c s.(state_clauses)
+         | LearnedClause => s.(state_clauses)
+         end;
+       state_learned :=
+         match destination with
+         | OriginalClause => s.(state_learned)
+         | LearnedClause => ClauseStore.add ci c s.(state_learned)
+         end;
        state_watched := s.(state_watched);
        state_falsified := s.(state_falsified);
        state_pending := s.(state_pending) |} in
-  let '(satisfied, undecided) := scan_clause_once s.(state_trail) c in
-  if orb satisfied (clause_has_opposite_literals c) then
-    Progress base
-  else
-    match undecided with
-    | [] =>
-        let conflict_state :=
-          {| state_trail := s.(state_trail);
-             state_clauses := clauses;
-             state_learned := learned;
-             state_watched := s.(state_watched);
-             state_falsified := pointer :: s.(state_falsified);
-             state_pending := s.(state_pending) |} in
-        Conflict conflict_state c
-    | l :: undecided' =>
-        match find_different_var (literal_var l) undecided' with
-        | None =>
-            Progress
-              {| state_trail := s.(state_trail);
-                 state_clauses := clauses;
-                 state_learned := learned;
-                 state_watched :=
-                   ClauseMap.add l pointer s.(state_watched);
-                 state_falsified := s.(state_falsified);
-                 state_pending := (l, pointer) :: s.(state_pending) |}
-        | Some l' =>
-            Progress
-              {| state_trail := s.(state_trail);
-                 state_clauses := clauses;
-                 state_learned := learned;
-                 state_watched :=
-                   ClauseMap.add l' pointer
-                     (ClauseMap.add l pointer s.(state_watched));
-                 state_falsified := s.(state_falsified);
-                 state_pending := s.(state_pending) |}
-        end
-    end.
+  index_clause pointer base c.
 
 Definition add_clause : State -> Clause -> progress_result :=
   add_clause_to OriginalClause.
@@ -923,19 +1174,47 @@ Definition add_clause : State -> Clause -> progress_result :=
 Definition add_learned : State -> Clause -> progress_result :=
   add_clause_to LearnedClause.
 
-Fixpoint reindex_clauses (pointer : ClauseId -> ClausePointer)
-    (store : ClauseStore.t) (ids : list ClauseId) (s : State)
-    : progress_result :=
-  match ids with
-  | [] => Progress s
-  | ci :: ids' =>
-      match ClauseStore.find ci store with
-      | None => reindex_clauses pointer store ids' s
+Definition clause_pointers (s : State) : list ClausePointer :=
+  map Source (ClauseStore.keys s.(state_clauses)) ++
+  map Learned (ClauseStore.keys s.(state_learned)).
+
+(* TODO: this is probably slow *)
+Fixpoint reclassify_clauses (m : Model) (s : State)
+    (clauses : list ClausePointer) : list ClausePointer * Pending :=
+  match clauses with
+  | [] => ([], [])
+  | ci :: clauses' =>
+      let '(falsified, pending) := reclassify_clauses m s clauses' in
+      match find_clause ci s with
+      | None => (falsified, pending)
       | Some c =>
-          match index_clause (pointer ci) s c with
-          | Progress s' => reindex_clauses pointer store ids' s'
-          | Conflict s' cause => Conflict s' cause
-          end
+          if clause_has_opposite_literals c then (falsified, pending)
+          else
+          let '(satisfied, undecided) := scan_clause_once m c in
+          if satisfied then (falsified, pending)
+          else
+            match undecided with
+            | [] => (ci :: falsified, pending)
+            | l :: undecided' =>
+                match find_different_var (literal_var l) undecided' with
+                | None => (falsified, (l, ci) :: pending)
+                | Some _ => (falsified, pending)
+                end
+            end
+      end
+  end.
+
+Definition reclassify_state (m : Model) (s : State)
+    : list ClausePointer * Pending :=
+  reclassify_clauses m s (clause_pointers s).
+
+Definition finish_progress (s : State) : progress_result :=
+  match s.(state_falsified) with
+  | [] => Progress s
+  | ci :: _ =>
+      match find_clause ci s with
+      | Some c => Conflict s c
+      | None => Conflict s []
       end
   end.
 
@@ -945,32 +1224,17 @@ Definition backtrack (conflict : State * Clause) : option progress_result :=
   | None => None
   | Some learned =>
       let trail := pop_to_decision learned s.(state_trail) in
-      let reset :=
+      let '(falsified, pending) := reclassify_state (trail_model trail) s in
+      let backtracked :=
         {| state_trail := trail;
            state_clauses := s.(state_clauses);
            state_learned := s.(state_learned);
-           state_watched := ClauseMap.empty;
-           state_falsified := [];
-           state_pending := [] |} in
-      match reindex_clauses Source s.(state_clauses)
-          (ClauseStore.keys s.(state_clauses)) reset with
-      | Conflict s' cause' => Some (Conflict s' cause')
-      | Progress originals_indexed =>
-          match reindex_clauses Learned s.(state_learned)
-              (ClauseStore.keys s.(state_learned)) originals_indexed with
-          | Conflict s' cause' => Some (Conflict s' cause')
-          | Progress all_indexed => Some (add_learned all_indexed learned)
-          end
-      end
-  end.
-
-Definition finish_progress (s : State) : progress_result :=
-  match s.(state_falsified) with
-  | [] => Progress s
-  | ci :: _ =>
-      match find_clause ci s with
-      | Some c => Conflict s c
-      | None => Conflict s []
+           state_watched := s.(state_watched);
+           state_falsified := falsified;
+           state_pending := pending |} in
+      match add_learned backtracked learned with
+      | Progress s' => Some (finish_progress s')
+      | Conflict s' cause => Some (Conflict s' cause)
       end
   end.
 
@@ -1004,6 +1268,17 @@ Proof.
 Qed.
 Opaque guard.
 
+Definition rush_has_work (s : State) : bool :=
+  match s.(state_pending) with
+  | _ :: _ => true
+  | [] =>
+      match find_undecided_var s.(state_trail)
+          (problem_vars s) with
+      | Some _ => true
+      | None => false
+      end
+  end.
+
 (* Define arbitrary tail-recursive functions as co-fixpoint returning a [Delay
    A]. *)
 CoInductive Delay A :=
@@ -1015,14 +1290,12 @@ Arguments Later {A}.
 (* Note: here's a termination metric, the lexicographically ordered
    `((number of watched literal - number of pending literal), number of pending literal)` *)
 CoFixpoint rush (s : State) : Delay (State + (State * Clause)) :=
-  (* TODO: add an is_empty predicate to ClauseMap directly *)
-  if is_empty (ClauseMap.keys s.(state_watched)) then
-    Now (inl s)
-  else
+  if rush_has_work s then
     match progress s with
     | Progress s' => Later (rush s')
     | Conflict s' cause => Now (inr (s', cause))
-    end.
+    end
+  else Now (inl s).
 
 CoFixpoint delay_bind {A B : Type} (d : Delay A) (k : A -> Delay B)
     : Delay B :=

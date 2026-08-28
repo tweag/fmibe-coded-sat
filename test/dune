@@ -4,4 +4,4 @@
  (libraries fmibe_app))
 
 (cram
- (deps ../app/solve.exe sat.cnf unsat.cnf))
+ (deps ../app/solve.exe sat.cnf unsat.cnf root-unit.cnf backtrack.cnf))
