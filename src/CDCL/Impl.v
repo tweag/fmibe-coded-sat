@@ -1276,16 +1276,6 @@ Definition is_empty {A} (l : list A) : bool :=
   | _ => false
   end.
 
-(* TODO: Do I use *)
-(* Guard structural arguments of recursive occurrences with [guard] to ensure
-   normalisation when the guard condition check is bypassed. *)
-Definition guard {A} (x:A) := x.
-Lemma unguard : forall A (x:A), guard x = x.
-Proof.
-  reflexivity.
-Qed.
-Opaque guard.
-
 Definition rush_has_work (s : State) : bool :=
   match s.(state_pending) with
   | _ :: _ => true
