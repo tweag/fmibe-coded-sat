@@ -26,7 +26,7 @@ Module OptionMonoid (Value : ValueType) <: Monoid.
   Proof. intros [x|]; reflexivity. Qed.
 End OptionMonoid.
 
-Module Type MapSig (Key : DecidableType) (Value : ValueType).
+Module Type MapSig (Key : OrderedKey) (Value : ValueType).
   Parameter t : Type.
   Parameter empty : t.
   Parameter find : Key.t -> t -> option Value.t.
@@ -46,7 +46,7 @@ Module Type MapSig (Key : DecidableType) (Value : ValueType).
     find k m <> None <-> In k (keys m).
 End MapSig.
 
-Module Make (Key : DecidableType) (Value : ValueType) : MapSig Key Value.
+Module Make (Key : OrderedKey) (Value : ValueType) : MapSig Key Value.
   Module OptionMonoid' := OptionMonoid Value.
   Module Base := FiniteMap.RawMake Key OptionMonoid'.
 

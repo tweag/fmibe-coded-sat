@@ -5,6 +5,7 @@ Import ListNotations.
 Require Import Stdlib.Arith.PeanoNat.
 Require Import Stdlib.Arith.Arith.
 Require Import Stdlib.micromega.Lia.
+Require Import Stdlib.Structures.OrderedType.
 Require Import FMV.FiniteMap.
 Require Import FMV.ListMap.
 Require Import FMV.Map.
@@ -86,15 +87,27 @@ Definition clause_has_opposite_literals (c : Clause) : bool :=
 Definition clause_eq_dec : forall l r : Clause, {l = r} + {l <> r} :=
   list_eq_dec literal_eq_dec.
 
-Module VarKey.
+Module IdOrderedKey <: OrderedKey.
   Definition t := Var.
   Definition eq_dec := Id.eq_dec.
-End VarKey.
+  Definition lt (x y : t) := Id.to_nat x < Id.to_nat y.
+  Lemma lt_trans : forall x y z, lt x y -> lt y z -> lt x z.
+  Proof. unfold lt. intros. lia. Qed.
+  Lemma lt_not_eq : forall x y, lt x y -> x <> y.
+  Proof. unfold lt. intros x y Hlt ->. lia. Qed.
+  Definition compare (x y : t) : Compare lt eq x y.
+  Proof.
+    case_eq (Nat.compare (Id.to_nat x) (Id.to_nat y)); intros Hcompare.
+    - apply EQ. apply nat_compare_eq in Hcompare.
+      rewrite <- (Id.of_nat_to_nat x), <- (Id.of_nat_to_nat y).
+      now rewrite Hcompare.
+    - apply LT. now apply nat_compare_Lt_lt.
+    - apply GT. now apply nat_compare_Gt_gt.
+  Defined.
+End IdOrderedKey.
 
-Module ClauseIdKey.
-  Definition t := ClauseId.
-  Definition eq_dec := Id.eq_dec.
-End ClauseIdKey.
+Module VarKey := IdOrderedKey.
+Module ClauseIdKey := IdOrderedKey.
 
 Definition clause_pointer_eq_dec (l r : ClausePointer) : {l = r} + {l <> r}.
 Proof.
@@ -191,11 +204,11 @@ Module ClauseMap.
     find_literal l (clear_literal l m) = [].
   Proof.
     intros [v|v] m.
-    - unfold find_literal, clear_literal, find_pos, Buckets.find,
-        Buckets.map_at. cbn.
+    - unfold find_literal, clear_literal, find_pos.
+      rewrite Buckets.find_map_at_eq.
       destruct (VarKey.eq_dec v v); [reflexivity|contradiction].
-    - unfold find_literal, clear_literal, find_neg, Buckets.find,
-        Buckets.map_at. cbn.
+    - unfold find_literal, clear_literal, find_neg.
+      rewrite Buckets.find_map_at_eq.
       destruct (VarKey.eq_dec v v); [reflexivity|contradiction].
   Qed.
 
@@ -219,30 +232,30 @@ Module ClauseMap.
     find_pos v' (clear_literal (Pos v) m) =
       if VarKey.eq_dec v v' then [] else find_pos v' m.
   Proof.
-    intros. unfold find_pos, clear_literal, Buckets.find, Buckets.map_at.
-    cbn. destruct (VarKey.eq_dec v v'); reflexivity.
+    intros. unfold find_pos, clear_literal. rewrite Buckets.find_map_at_eq.
+    destruct (VarKey.eq_dec v v'); reflexivity.
   Qed.
 
   Lemma find_neg_clear_pos : forall m v v',
     find_neg v' (clear_literal (Pos v) m) = find_neg v' m.
   Proof.
-    intros. unfold find_neg, clear_literal, Buckets.find, Buckets.map_at.
-    cbn. destruct (VarKey.eq_dec v v'); reflexivity.
+    intros. unfold find_neg, clear_literal. rewrite Buckets.find_map_at_eq.
+    destruct (VarKey.eq_dec v v'); reflexivity.
   Qed.
 
   Lemma find_pos_clear_neg : forall m v v',
     find_pos v' (clear_literal (Neg v) m) = find_pos v' m.
   Proof.
-    intros. unfold find_pos, clear_literal, Buckets.find, Buckets.map_at.
-    cbn. destruct (VarKey.eq_dec v v'); reflexivity.
+    intros. unfold find_pos, clear_literal. rewrite Buckets.find_map_at_eq.
+    destruct (VarKey.eq_dec v v'); reflexivity.
   Qed.
 
   Lemma find_neg_clear_neg : forall m v v',
     find_neg v' (clear_literal (Neg v) m) =
       if VarKey.eq_dec v v' then [] else find_neg v' m.
   Proof.
-    intros. unfold find_neg, clear_literal, Buckets.find, Buckets.map_at.
-    cbn. destruct (VarKey.eq_dec v v'); reflexivity.
+    intros. unfold find_neg, clear_literal. rewrite Buckets.find_map_at_eq.
+    destruct (VarKey.eq_dec v v'); reflexivity.
   Qed.
 
   Lemma find_clear_literal_in : forall m l v ci,
@@ -311,26 +324,26 @@ Module ClauseMap.
     find_pos v' (add (Pos v) ci m) =
       if VarKey.eq_dec v v' then ci :: find_pos v' m else find_pos v' m.
   Proof.
-    intros. unfold find_pos, add, Buckets.find, Buckets.add. cbn.
+    intros. unfold find_pos, add. rewrite Buckets.find_add_eq. cbn.
     destruct (VarKey.eq_dec v v'); reflexivity.
   Qed.
   Lemma find_neg_add_pos : forall m ci v v',
     find_neg v' (add (Pos v) ci m) = find_neg v' m.
   Proof.
-    intros. unfold find_neg, add, Buckets.find, Buckets.add. cbn.
+    intros. unfold find_neg, add. rewrite Buckets.find_add_eq. cbn.
     destruct (VarKey.eq_dec v v'); reflexivity.
   Qed.
   Lemma find_pos_add_neg : forall m ci v v',
     find_pos v' (add (Neg v) ci m) = find_pos v' m.
   Proof.
-    intros. unfold find_pos, add, Buckets.find, Buckets.add. cbn.
+    intros. unfold find_pos, add. rewrite Buckets.find_add_eq. cbn.
     destruct (VarKey.eq_dec v v'); reflexivity.
   Qed.
   Lemma find_neg_add_neg : forall m ci v v',
     find_neg v' (add (Neg v) ci m) =
       if VarKey.eq_dec v v' then ci :: find_neg v' m else find_neg v' m.
   Proof.
-    intros. unfold find_neg, add, Buckets.find, Buckets.add. cbn.
+    intros. unfold find_neg, add. rewrite Buckets.find_add_eq. cbn.
     destruct (VarKey.eq_dec v v'); reflexivity.
   Qed.
 
@@ -436,14 +449,14 @@ Module ClauseMap.
     find_pos v (remove removed m) =
       if VarKey.eq_dec removed v then [] else find_pos v m.
   Proof.
-    intros. unfold find_pos, remove, Buckets.find, Buckets.remove. cbn.
+    intros. unfold find_pos, remove. rewrite Buckets.find_remove_eq. cbn.
     destruct (VarKey.eq_dec removed v); reflexivity.
   Qed.
   Lemma find_neg_remove : forall m v removed,
     find_neg v (remove removed m) =
       if VarKey.eq_dec removed v then [] else find_neg v m.
   Proof.
-    intros. unfold find_neg, remove, Buckets.find, Buckets.remove. cbn.
+    intros. unfold find_neg, remove. rewrite Buckets.find_remove_eq. cbn.
     destruct (VarKey.eq_dec removed v); reflexivity.
   Qed.
 

@@ -1,6 +1,7 @@
 Require Import Stdlib.Lists.List.
 Import ListNotations.
 Require Import Stdlib.micromega.Lia.
+Require Import Stdlib.Logic.FunctionalExtensionality.
 Require Import FMV.FiniteMap.
 
 Module ListMonoid (Element : DecidableType) <: Monoid.
@@ -15,7 +16,7 @@ Module ListMonoid (Element : DecidableType) <: Monoid.
   Proof. intros. apply app_nil_r. Qed.
 End ListMonoid.
 
-Module Type ListMapSig (Key : DecidableType) (Element : DecidableType).
+Module Type ListMapSig (Key : OrderedKey) (Element : DecidableType).
   Parameter t : Type.
   Parameter empty : t.
   Parameter find : Key.t -> t -> list Element.t.
@@ -54,7 +55,7 @@ Module Type ListMapSig (Key : DecidableType) (Element : DecidableType).
     In x (elements m) <-> exists k, In k (keys m) /\ In x (find k m).
 End ListMapSig.
 
-Module Make (Key : DecidableType) (Element : DecidableType) <: ListMapSig Key Element.
+Module Make (Key : OrderedKey) (Element : DecidableType) <: ListMapSig Key Element.
   Module ListMonoid' := ListMonoid Element.
 
   Module Base := FiniteMap.RawMake Key ListMonoid'.
@@ -154,13 +155,21 @@ Module Make (Key : DecidableType) (Element : DecidableType) <: ListMapSig Key El
   Lemma card_of_add : forall m x k,
     card_of x (add k x m) = S (card_of x m).
   Proof.
-    intros m x k. unfold card_of, elements, add, find, Base.add. simpl.
+    intros m x k. unfold card_of, elements, add, find.
+    rewrite Base.keys_add_eq.
+    assert ((fun k' => Base.find k' (Base.add k [x] m)) =
+      (fun k' => if Key.eq_dec k k' then x :: Base.find k' m
+        else Base.find k' m)) as Hfind.
+    { apply functional_extensionality. intros k'. apply Base.find_add_eq. }
+    rewrite Hfind. unfold Base.keys.
     destruct (in_dec Key.eq_dec k (Base.support m)) as [Hin|Hnotin].
     - rewrite count_occ_flat_map_add_present;
         [|exact (proj1 (Base.support_spec m))|exact Hin].
       simpl. destruct (Element.eq_dec x x); [reflexivity|contradiction].
     - simpl. destruct (Key.eq_dec k k) as [_|Habs]; [|contradiction].
-      rewrite (Base.lookup_notin_support m k Hnotin).
+      assert (Base.find k m = []) as Hempty.
+      { unfold Base.find. now apply Base.lookup_notin_support. }
+      rewrite Hempty.
       rewrite !count_occ_app, count_occ_flat_map_add_absent by exact Hnotin.
       simpl. destruct (Element.eq_dec x x); [reflexivity|contradiction].
   Qed.
@@ -168,13 +177,21 @@ Module Make (Key : DecidableType) (Element : DecidableType) <: ListMapSig Key El
   Lemma card_of_add_neq : forall m x y k,
     x <> y -> card_of y (add k x m) = card_of y m.
   Proof.
-    intros m x y k Hneq. unfold card_of, elements, add, find, Base.add. simpl.
+    intros m x y k Hneq. unfold card_of, elements, add, find.
+    rewrite Base.keys_add_eq.
+    assert ((fun k' => Base.find k' (Base.add k [x] m)) =
+      (fun k' => if Key.eq_dec k k' then x :: Base.find k' m
+        else Base.find k' m)) as Hfind.
+    { apply functional_extensionality. intros k'. apply Base.find_add_eq. }
+    rewrite Hfind. unfold Base.keys.
     destruct (in_dec Key.eq_dec k (Base.support m)) as [Hin|Hnotin].
     - rewrite count_occ_flat_map_add_present;
         [|exact (proj1 (Base.support_spec m))|exact Hin].
       simpl. destruct (Element.eq_dec x y); [contradiction|reflexivity].
     - simpl. destruct (Key.eq_dec k k) as [_|Habs]; [|contradiction].
-      rewrite (Base.lookup_notin_support m k Hnotin).
+      assert (Base.find k m = []) as Hempty.
+      { unfold Base.find. now apply Base.lookup_notin_support. }
+      rewrite Hempty.
       rewrite !count_occ_app, count_occ_flat_map_add_absent by exact Hnotin.
       simpl. destruct (Element.eq_dec x y); [contradiction|reflexivity].
   Qed.
@@ -206,8 +223,12 @@ Module Make (Key : DecidableType) (Element : DecidableType) <: ListMapSig Key El
     card_of x (remove k m) + count_occ Element.eq_dec (find k m) x =
       card_of x m.
   Proof.
-    intros m x k. unfold card_of, elements, remove, find, Base.remove. simpl.
-    unfold Base.keys.
+    intros m x k. unfold card_of, elements, remove, find.
+    rewrite Base.keys_remove_eq.
+    assert ((fun k' => Base.find k' (Base.remove k m)) =
+      (fun k' => if Key.eq_dec k k' then [] else Base.find k' m)) as Hfind.
+    { apply functional_extensionality. intros k'. apply Base.find_remove_eq. }
+    rewrite Hfind. unfold Base.keys.
     destruct (in_dec Key.eq_dec k (Base.support m)) as [Hin|Hnotin].
     - apply in_split in Hin as [before [after Hsupport]].
       pose proof (proj1 (Base.support_spec m)) as Hnodup.
@@ -245,7 +266,7 @@ Module Make (Key : DecidableType) (Element : DecidableType) <: ListMapSig Key El
   Lemma find_remove_eq : forall m k k',
     find k (remove k' m) =
       if Key.eq_dec k' k then [] else find k m.
-  Proof. reflexivity. Qed.
+  Proof. intros m k k'. exact (Base.find_remove_eq m k' k). Qed.
 
   Lemma find_remove : forall m k x k',
     In x (find k (remove k' m)) <-> In x (find k m) /\ k <> k'.
