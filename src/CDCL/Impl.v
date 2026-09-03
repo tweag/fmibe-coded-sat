@@ -45,6 +45,10 @@ Definition Problem := list Clause.
 Definition Model := list Literal.
 Definition Pending := list (Literal * ClausePointer).
 
+(* This hook is logically inert.  Extraction replaces it with a side effect
+   used by the benchmark harness to count conflict-processing steps. *)
+Definition count_conflict {A : Type} (value : A) : A := value.
+
 Variant TrailEntry :=
   | Decision (l : Literal)
   | Propagation (l : Literal) (cause : ClausePointer).
@@ -1219,6 +1223,7 @@ Definition finish_progress (s : State) : progress_result :=
   end.
 
 Definition backtrack (conflict : State * Clause) : option progress_result :=
+  let conflict := count_conflict conflict in
   let '(s, cause) := conflict in
   match analyze_conflict s cause with
   | None => None

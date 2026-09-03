@@ -15,3 +15,6 @@
 
   $ ../app/solve.exe bench sat sat.cnf | sed -n '1p'
   Benchmarking 1 DIMACS instances
+
+  $ ../app/solve.exe bench sat backtrack.cnf | tail -n 1 | awk '{ print $NF }'
+  1

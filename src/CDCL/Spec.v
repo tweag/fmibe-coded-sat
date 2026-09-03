@@ -6105,6 +6105,7 @@ Lemma backtrack_conflict_trail : forall conflict cause s' cause',
     s'.(state_trail) = pop_to_decision learned conflict.(state_trail).
 Proof.
   intros conflict cause s' cause' Hbacktrack. unfold backtrack in Hbacktrack.
+  cbn [count_conflict] in Hbacktrack.
   destruct (analyze_conflict conflict cause) as [learned|] eqn:Hanalyze;
     [|discriminate].
   remember (reclassify_state
@@ -6136,6 +6137,7 @@ Lemma backtrack_none_analyze_none : forall s cause,
   backtrack (s, cause) = None -> analyze_conflict s cause = None.
 Proof.
   intros s cause Hbacktrack. unfold backtrack in Hbacktrack.
+  cbn [count_conflict] in Hbacktrack.
   destruct (analyze_conflict s cause) as [learned|] eqn:Hanalyze;
     [|reflexivity].
   destruct (reclassify_state
@@ -6535,7 +6537,7 @@ Lemma backtrack_conflict_sound : forall s cause s' cause',
   s'.(state_clauses) = s.(state_clauses).
 Proof.
   intros s cause s' cause' Hinv Himplied Hfalse Hbacktrack.
-  unfold backtrack in Hbacktrack.
+  unfold backtrack in Hbacktrack. cbn [count_conflict] in Hbacktrack.
   destruct (analyze_conflict s cause) as [learned|] eqn:Hanalyze;
     [|discriminate].
   remember (reclassify_state
@@ -6594,7 +6596,7 @@ Lemma backtrack_conflict_inv : forall s cause s' cause',
   backtrack_invariant s'.
 Proof.
   intros s cause s' cause' Hinv Himplied Hfalse Hbacktrack.
-  unfold backtrack in Hbacktrack.
+  unfold backtrack in Hbacktrack. cbn [count_conflict] in Hbacktrack.
   destruct (analyze_conflict s cause) as [learned|] eqn:Hanalyze;
     [|discriminate].
   remember (reclassify_state
@@ -6649,7 +6651,7 @@ Lemma backtrack_progress_inv : forall s cause next,
   next.(state_clauses) = s.(state_clauses).
 Proof.
   intros s cause next Hinv Himplied Hfalse Hbacktrack.
-  unfold backtrack in Hbacktrack.
+  unfold backtrack in Hbacktrack. cbn [count_conflict] in Hbacktrack.
   destruct (analyze_conflict s cause) as [learned|] eqn:Hanalyze;
     [|discriminate].
   remember (reclassify_state

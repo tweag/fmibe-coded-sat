@@ -6,7 +6,7 @@
 (library
  (name fmibe_app)
  (wrapped false)
- (modules sat dimacs_parser)
+ (modules sat dimacs_parser conflict_counter)
  (libraries dolmen.dimacs dolmen.std))
 
 (executable

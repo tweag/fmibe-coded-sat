@@ -73,11 +73,20 @@ let solve_checked file =
       (Printf.sprintf "%s: expected a different result, got %s" file
          (result_name actual))
 
-let timed_solve file =
-  let start = Unix.gettimeofday () in
-  let result = solve_checked file in
-  let elapsed = Unix.gettimeofday () -. start in
-  result, elapsed
+let print_benchmark_header file_width =
+  Printf.printf "%-*s  %-7s  %10s  %10s\n" file_width "FILE" "RESULT"
+    "SECONDS" "CONFLICTS";
+  Printf.printf "%s  %s  %s  %s\n" (String.make file_width '-')
+    (String.make 7 '-') (String.make 10 '-') (String.make 10 '-')
+
+let print_benchmark_row file_width file result elapsed conflicts =
+  Printf.printf "%-*s  %-7s  %10.6f  %10d\n%!" file_width file result elapsed
+    conflicts
+
+let print_benchmark_total file_width elapsed conflicts =
+  Printf.printf "%s  %s  %s  %s\n" (String.make file_width '-')
+    (String.make 7 '-') (String.make 10 '-') (String.make 10 '-');
+  print_benchmark_row file_width "TOTAL" "" elapsed conflicts
 
 let benchmark_sat path =
   try
@@ -90,22 +99,47 @@ let benchmark_sat path =
           (fun width file -> max width (String.length file))
           (String.length "FILE") files
       in
-      Printf.printf "%-*s  %-6s  %10s\n" file_width "FILE" "RESULT" "SECONDS";
-      Printf.printf "%s  %s  %s\n" (String.make file_width '-')
-        (String.make 6 '-') (String.make 10 '-');
-      let total =
-        List.fold_left
-          (fun total file ->
-            let result, elapsed = timed_solve file in
-            Printf.printf "%-*s  %-6s  %10.6f\n%!" file_width file
-              (result_name result) elapsed;
-            total +. elapsed)
-          0. files
+      print_benchmark_header file_width;
+      let total_elapsed = ref 0. in
+      let total_conflicts = ref 0 in
+      let active = ref None in
+      let interrupted _ =
+        let elapsed, conflicts =
+          match !active with
+          | None -> 0., 0
+          | Some (file, start) ->
+              let elapsed = Unix.gettimeofday () -. start in
+              let conflicts = Conflict_counter.get () in
+              print_benchmark_row file_width file "TIMEOUT" elapsed conflicts;
+              elapsed, conflicts
+        in
+        print_benchmark_total file_width
+          (!total_elapsed +. elapsed)
+          (!total_conflicts + conflicts);
+        exit 124
       in
-      Printf.printf "%s  %s  %s\n" (String.make file_width '-')
-        (String.make 6 '-') (String.make 10 '-');
-      Printf.printf "%-*s  %-6s  %10.6f\n" file_width "TOTAL" "" total;
-      `Ok ()
+      let previous_signal =
+        Sys.signal Sys.sigterm (Sys.Signal_handle interrupted)
+      in
+      Fun.protect
+        ~finally:(fun () -> Sys.set_signal Sys.sigterm previous_signal)
+        (fun () ->
+          List.iter
+            (fun file ->
+              Conflict_counter.reset ();
+              let start = Unix.gettimeofday () in
+              active := Some (file, start);
+              let result = solve_checked file in
+              let elapsed = Unix.gettimeofday () -. start in
+              let conflicts = Conflict_counter.get () in
+              active := None;
+              print_benchmark_row file_width file (result_name result) elapsed
+                conflicts;
+              total_elapsed := !total_elapsed +. elapsed;
+              total_conflicts := !total_conflicts + conflicts)
+            files;
+          print_benchmark_total file_width !total_elapsed !total_conflicts;
+          `Ok ())
     end
   with exn -> `Error (false, Printexc.to_string exn)
 

@@ -12,6 +12,11 @@ Extract Inductive Delay => "" [ "" "" ].
 Extract Inlined Constant delay_bind =>
   "(fun value continuation -> continuation value)".
 
+(* Keep conflict accounting outside the verified algorithm.  In Rocq the hook
+   is a no-op; the extracted program records one event per [backtrack] call. *)
+Extract Constant count_conflict =>
+  "(fun value -> Conflict_counter.increment (); value)".
+
 (* The CLI uses the persistent two-watch implementation.  Unit clauses are
    queued before the first decision and backtracking leaves watches in place. *)
 Extraction "sat.ml" Clause Problem empty_state add_clause sat.

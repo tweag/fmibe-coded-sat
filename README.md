@@ -59,8 +59,17 @@ Run the SATLIB benchmark corpus with the optimized benchmark profile:
 $ dune exec --profile benchmark app/solve.exe -- bench sat benchmarks/satlib
 ```
 
-Each DIMACS file is solved once. The command prints its result and elapsed time
-in a table, followed by the total elapsed time.
+Each DIMACS file is solved once. The command prints its result, elapsed time,
+and number of conflicts in a table, followed by totals. A conflict is counted
+each time the solver enters its backtracking operation.
+
+Long-running benchmarks can be bounded with `timeout`. Its usual `SIGTERM` is
+handled gracefully: the active file is printed as `TIMEOUT`, partial totals are
+printed, and the process exits with status 124.
+
+```console
+$ timeout 30s dune exec --profile benchmark app/solve.exe -- bench sat path/to/problem.cnf
+```
 
 The benchmark command also accepts a single DIMACS file:
 
