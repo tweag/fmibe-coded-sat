@@ -1110,6 +1110,38 @@ Fixpoint pop_to_decision_after (learned : Clause) (after_propagation : bool)
 Definition pop_to_decision (learned : Clause) (trail : Trail) : Trail :=
   pop_to_decision_after learned false trail.
 
+Fixpoint trail_has_decision (trail : Trail) : bool :=
+  match trail with
+  | [] => false
+  | Decision _ :: _ => true
+  | Propagation _ _ :: trail' => trail_has_decision trail'
+  end.
+
+Fixpoint pop_to_root (trail : Trail) : Trail :=
+  match trail with
+  | [] => []
+  | entry :: trail' =>
+      if trail_has_decision trail then pop_to_root trail' else trail
+  end.
+
+Definition clause_has_two_variablesb (c : Clause) : bool :=
+  match c with
+  | [] => false
+  | l :: c' =>
+      match find_different_var (literal_var l) c' with
+      | Some _ => true
+      | None => false
+      end
+  end.
+
+Definition backtrack_trail (learned : Clause) (trail : Trail) : Trail :=
+  if clause_has_two_variablesb learned then
+    match pop_to_decision learned trail with
+    | [] => pop_to_root trail
+    | popped => popped
+    end
+  else pop_to_root trail.
+
 Definition fresh_clause_id (s : State) : ClauseId :=
   Id.fresh (ClauseStore.keys s.(state_clauses)).
 
@@ -1286,9 +1318,11 @@ Fixpoint reclassify_clauses (m : Model) (s : State)
       end
   end.
 
-(* TODO: in an ideal world, we shouldn't be doing any such reclassification. *)
+Definition pending_clause_pointers (pending : Pending) : list ClausePointer :=
+  map snd pending.
+
 Definition reclassify_state (m : Model) (s : State) : Pending :=
-  reclassify_clauses m s (clause_pointers s).
+  reclassify_clauses m s (pending_clause_pointers s.(state_pending)).
 
 Definition backtrack (conflict : State * Clause) : option progress_result :=
   let conflict := count_conflict conflict in
@@ -1296,7 +1330,7 @@ Definition backtrack (conflict : State * Clause) : option progress_result :=
   match analyze_conflict s cause with
   | None => None
   | Some learned =>
-      let trail := pop_to_decision learned s.(state_trail) in
+      let trail := backtrack_trail learned s.(state_trail) in
       let pending := reclassify_state (trail_model trail) s in
       let backtracked :=
         {| state_trail := trail;
@@ -1304,7 +1338,11 @@ Definition backtrack (conflict : State * Clause) : option progress_result :=
            state_learned := s.(state_learned);
            state_watched := s.(state_watched);
            state_pending := pending |} in
-      Some (add_learned backtracked learned)
+      match trail_has_decision trail,
+          scan_clause_once (trail_model trail) learned with
+      | false, (false, []) => None
+      | _, _ => Some (add_learned backtracked learned)
+      end
   end.
 
 Definition progress (s : State) : progress_result :=
