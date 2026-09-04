@@ -1041,25 +1041,74 @@ Fixpoint negated_decisions (trail : Trail) : Clause :=
   | Propagation _ _ :: trail' => negated_decisions trail'
   end.
 
-(* This first conflict analysis ignores the immediate conflict clause and
-   learns only that the decisions leading to it cannot all hold together. *)
-Definition analyze_conflict (s : State) (_conflict : Clause) : option Clause :=
-  match negated_decisions s.(state_trail) with
-  | [] => None
-  | learned => Some learned
+Definition without_literal (removed : Literal) (c : Clause) : Clause :=
+  filter (fun l => if literal_eq_dec l removed then false else true) c.
+
+Fixpoint clause_union (left right : Clause) : Clause :=
+  match left with
+  | [] => right
+  | l :: left' =>
+      if in_dec literal_eq_dec l right then clause_union left' right
+      else l :: clause_union left' right
   end.
 
-(* Drop the most recent part of the trail, including the first decision whose
-   opposite occurs in the learned clause.  Since trails are newest-first, the
-   result is the older prefix to which search should backtrack. *)
-Fixpoint pop_to_decision (learned : Clause) (trail : Trail) : Trail :=
+(* Resolve two clauses on [pivot].  Clauses are represented as lists, so
+   [union] also prevents conflict analysis from accumulating duplicates. *)
+Definition resolve_clause (pivot : Literal) (left right : Clause) : Clause :=
+  clause_union
+    (without_literal (opposite_literal pivot) left)
+    (without_literal pivot right).
+
+(* Builds a 1-UIP clause (probably). Implemented with explicit clause
+   resolution, rather than the usual clever encoding (because I don't even want
+   to get into the proof of that). *)
+Fixpoint analyze_conflict_trail (clauses learned : ClauseStore.t)
+    (trail : Trail) (conflict : Clause) : Clause :=
+  match trail with
+  | [] => conflict
+  | Decision _ :: trail' =>
+      analyze_conflict_trail clauses learned trail' conflict
+  | Propagation l cause :: trail' =>
+      let conflict' :=
+        if in_dec literal_eq_dec (opposite_literal l) conflict then
+          match find_clause_in clauses learned cause with
+          | Some reason => resolve_clause l conflict reason
+          | None => conflict
+          end
+        else conflict in
+      analyze_conflict_trail clauses learned trail' conflict'
+  end.
+
+Definition analyze_conflict (s : State) (conflict : Clause) : option Clause :=
+  match negated_decisions s.(state_trail) with
+  | [] => None
+  | decisions =>
+      match analyze_conflict_trail s.(state_clauses) s.(state_learned)
+          s.(state_trail) conflict with
+      | [] => Some decisions
+      | analyzed => Some analyzed
+      end
+  end.
+
+Fixpoint pop_to_decision_after (learned : Clause) (after_propagation : bool)
+    (trail : Trail) : Trail :=
   match trail with
   | [] => []
   | Decision l :: trail' =>
-      if in_dec literal_eq_dec (opposite_literal l) learned then trail'
-      else pop_to_decision learned trail'
-  | Propagation _ _ :: trail' => pop_to_decision learned trail'
+      if after_propagation then trail'
+      else if in_dec literal_eq_dec (opposite_literal l) learned then trail'
+      else pop_to_decision_after learned false trail'
+  | Propagation l _ :: trail' =>
+      pop_to_decision_after learned
+        (if in_dec literal_eq_dec (opposite_literal l) learned
+         then true else after_propagation)
+        trail'
   end.
+
+(* Backtrack to the first relevant decision, or to the decision immediately
+   below the first relevant propagation. *)
+Definition pop_to_decision (learned : Clause) (trail : Trail) : Trail :=
+  pop_to_decision_after learned false trail.
 
 Definition fresh_clause_id (s : State) : ClauseId :=
   Id.fresh (ClauseStore.keys s.(state_clauses)).

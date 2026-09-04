@@ -1181,23 +1181,30 @@ Proof.
     eqn:Hdecisions.
   - split; [intros _|intros _; reflexivity].
     now apply negated_decisions_nil_iff.
-  - split.
-    + discriminate.
-    + intros Hnone. exfalso.
+  - destruct (analyze_conflict_trail s.(state_clauses) s.(state_learned)
+      s.(state_trail) conflict); split; try discriminate;
+      intros Hnone; exfalso;
       assert (In l (negated_decisions s.(state_trail))) as Hin.
-      { rewrite Hdecisions. now left. }
-      apply negated_decisions_spec in Hin as [decision [Hin _]].
+    all: try (rewrite Hdecisions; now left).
+    all: apply negated_decisions_spec in Hin as [decision [Hin _]];
       exact (Hnone decision Hin).
 Qed.
 
 Lemma analyze_conflict_some : forall s conflict learned,
   analyze_conflict s conflict = Some learned ->
-  negated_decisions s.(state_trail) = learned.
+  learned = analyze_conflict_trail s.(state_clauses) s.(state_learned)
+      s.(state_trail) conflict \/
+  analyze_conflict_trail s.(state_clauses) s.(state_learned)
+      s.(state_trail) conflict = [] /\
+    learned = negated_decisions s.(state_trail).
 Proof.
   intros s conflict learned Hanalyze. unfold analyze_conflict in Hanalyze.
   destruct (negated_decisions s.(state_trail)) as [|l clause] eqn:Hdecisions;
     [discriminate|].
-  now injection Hanalyze as <-.
+  destruct (analyze_conflict_trail s.(state_clauses) s.(state_learned)
+    s.(state_trail) conflict) as [|x analyzed] eqn:Hresolved.
+  - right. injection Hanalyze as <-. now split.
+  - left. now injection Hanalyze as <-.
 Qed.
 
 Lemma decisions_hold : forall s l,
@@ -1236,19 +1243,6 @@ Proof.
     + apply IH. intros l Hin. apply Hholds. now right.
     + apply Hholds. now left.
   - apply IH. intros l Hin. apply Hholds. now right.
-Qed.
-
-Lemma analyze_conflict_invalid : forall s conflict learned,
-  state_invariant s ->
-  analyze_conflict s conflict = Some learned ->
-  Is_true
-    (negb (existsb (literal_is_true s.(state_trail))
-      learned)).
-Proof.
-  intros s conflict learned Hinv Hanalyze. apply Is_true_eq_left.
-  pose proof (analyze_conflict_some s conflict learned Hanalyze) as Hlearned.
-  rewrite <- Hlearned, negated_decisions_invalid; [reflexivity|].
-  intros l Hin. now apply decisions_hold.
 Qed.
 
 Lemma fresh_clause_id_not_in : forall s,
@@ -5183,18 +5177,33 @@ Proof.
       exact Hjustified.
 Qed.
 
+Lemma pop_to_decision_after_trail_invariant :
+  forall clauses learned clause after trail,
+  trail_invariant clauses learned trail ->
+  trail_invariant clauses learned
+    (pop_to_decision_after clause after trail).
+Proof.
+  intros clauses learned clause after trail.
+  induction trail as [|entry trail IH] in after |- *;
+    intros Hinv; [exact Hinv|].
+  assert (trail_invariant clauses learned trail) as Htail.
+  { now apply trail_invariant_tail with (entry := entry). }
+  destruct entry as [decision|propagated cause];
+    cbn [pop_to_decision_after].
+  - destruct after.
+    + exact Htail.
+    + destruct (in_dec literal_eq_dec (opposite_literal decision) clause);
+        [exact Htail|now apply IH].
+  - destruct (in_dec literal_eq_dec (opposite_literal propagated) clause);
+      now apply IH.
+Qed.
+
 Lemma pop_to_decision_trail_invariant : forall clauses learned clause trail,
   trail_invariant clauses learned trail ->
   trail_invariant clauses learned (pop_to_decision clause trail).
 Proof.
-  intros clauses learned clause trail. induction trail as [|entry trail IH];
-    intros Hinv; [exact Hinv|].
-  assert (trail_invariant clauses learned trail) as Htail.
-  { now apply trail_invariant_tail with (entry := entry). }
-  destruct entry as [decision|propagated cause]; cbn [pop_to_decision].
-  - destruct (in_dec literal_eq_dec (opposite_literal decision) clause);
-      [exact Htail|now apply IH].
-  - now apply IH.
+  intros clauses learned clause trail Hinv. unfold pop_to_decision.
+  now apply pop_to_decision_after_trail_invariant.
 Qed.
 
 Lemma literal_value_false_opposite_in : forall m l,
@@ -5288,6 +5297,74 @@ Proof.
         -- intros d Hd. apply Hdecisions. now right.
 Qed.
 
+Lemma in_without_literal : forall removed c l,
+  In l (without_literal removed c) <-> In l c /\ l <> removed.
+Proof.
+  intros removed c l. unfold without_literal. rewrite filter_In.
+  destruct (literal_eq_dec l removed); cbn; intuition congruence.
+Qed.
+
+Lemma in_clause_union : forall left right l,
+  In l (clause_union left right) <-> In l left \/ In l right.
+Proof.
+  intros left right l. induction left as [|x left IH]; cbn.
+  - tauto.
+  - destruct (in_dec literal_eq_dec x right) as [Hin|Hnotin].
+    + rewrite IH. split; [tauto|]. intros [[<-|Hl]|Hr]; tauto.
+    + cbn. rewrite IH. tauto.
+Qed.
+
+Lemma resolve_clause_satisfied : forall model pivot left right,
+  In (opposite_literal pivot) left ->
+  In pivot right ->
+  Is_true (satisfies_clause model left) ->
+  Is_true (satisfies_clause model right) ->
+  Is_true (satisfies_clause model (resolve_clause pivot left right)).
+Proof.
+  intros model pivot left right Hopleft Hpright Hleft Hright.
+  apply Is_true_eq_true in Hleft, Hright. unfold satisfies_clause in *.
+  apply existsb_exists in Hleft as [x [Hxleft Hxtrue]].
+  apply existsb_exists in Hright as [y [Hyright Hytrue]].
+  apply Is_true_eq_left, existsb_exists.
+  destruct (literal_eq_dec x (opposite_literal pivot)) as [->|Hxneq].
+  - assert (y <> pivot) as Hyneq.
+    { intros ->. pose proof (satisfies_opposite_true_is_false model pivot Hxtrue).
+      congruence. }
+    exists y. split; [|exact Hytrue]. unfold resolve_clause.
+    apply in_clause_union. right. apply in_without_literal. now split.
+  - exists x. split; [|exact Hxtrue]. unfold resolve_clause.
+    apply in_clause_union. left. apply in_without_literal. now split.
+Qed.
+
+Lemma analyze_conflict_trail_implied : forall clauses learned trail conflict,
+  trail_invariant clauses learned trail ->
+  (forall ci c, ClauseStore.find ci learned = Some c ->
+    clause_implied_by_store clauses c) ->
+  clause_implied_by_store clauses conflict ->
+  clause_implied_by_store clauses
+    (analyze_conflict_trail clauses learned trail conflict).
+Proof.
+  intros clauses learned trail. induction trail as [|entry trail IH];
+    intros conflict Htrail Hlearned Hconflict; [exact Hconflict|].
+  assert (Htail : trail_invariant clauses learned trail).
+  { now apply trail_invariant_tail with (entry := entry). }
+  destruct entry as [decision|propagated cause]; cbn [analyze_conflict_trail].
+  - now apply IH.
+  - destruct Htrail as [_ Hjustified]. cbn in Hjustified.
+    destruct Hjustified as [_ [reason [Hfind [Hneeds _]]]].
+    destruct (in_dec literal_eq_dec (opposite_literal propagated) conflict)
+      as [Hin|Hnotin].
+    + rewrite Hfind. apply IH; try assumption.
+      intros model Hstore. eapply resolve_clause_satisfied.
+      * exact Hin.
+      * exact (proj1 Hneeds).
+      * now apply Hconflict.
+      * destruct cause as [ci|ci]; cbn in Hfind.
+        -- now apply (Hstore ci reason).
+        -- now apply (Hlearned ci reason Hfind model Hstore).
+    + now apply IH.
+Qed.
+
 Theorem analyze_conflict_implied : forall s conflict learned,
   backtrack_invariant s ->
   analyze_conflict s conflict = Some learned ->
@@ -5295,30 +5372,15 @@ Theorem analyze_conflict_implied : forall s conflict learned,
   clause_falsified_by_model s.(state_trail) conflict ->
   clause_implied_by_store s.(state_clauses) learned.
 Proof.
-  intros s conflict learned Hinv Hanalyze Hconflict Hfalsified m Hstore.
-  pose proof (analyze_conflict_some s conflict learned Hanalyze) as Hlearned.
-  apply Is_true_eq_left. unfold satisfies_clause.
-  destruct (existsb (satisfies_literal m) learned)
-    eqn:Hanalyzed; [reflexivity|]. exfalso.
-  assert (Hdecisions : forall l, In (Decision l) s.(state_trail) ->
-      satisfies_literal m l = true).
-  { intros l Hin. eapply negated_decisions_false.
-    - rewrite Hlearned. exact Hanalyzed.
-    - exact Hin. }
-  pose proof (state_invariant_trail s Hinv) as [Hconsistent Hjustified].
-  pose proof (state_invariant_learned s Hinv) as Hlearnedinv.
-  assert (Htrail : forall l, In l (trail_model s.(state_trail)) ->
-      satisfies_literal m l = true).
-  { unfold learned_invariant in Hlearnedinv.
-    eapply justified_trail_sound; eauto. }
-  specialize (Hconflict m Hstore). apply Is_true_eq_true in Hconflict.
-  unfold satisfies_clause in Hconflict.
-  apply existsb_exists in Hconflict as [l [Hin Hltrue]].
-  pose proof (Hfalsified l Hin) as Hlfalse.
-  apply literal_value_false_opposite_in in Hlfalse.
-  specialize (Htrail (opposite_literal l) Hlfalse).
-  pose proof (satisfies_opposite_true_is_false m l Htrail).
-  congruence.
+  intros s conflict learned Hinv Hanalyze Hconflict Hfalsified.
+  pose proof (analyze_conflict_trail_implied s.(state_clauses)
+    s.(state_learned) s.(state_trail) conflict
+    (state_invariant_trail s Hinv) (state_invariant_learned s Hinv)
+    Hconflict) as Hresolved.
+  destruct (analyze_conflict_some s conflict learned Hanalyze)
+    as [->|[Hempty ->]]; [exact Hresolved|].
+  rewrite Hempty in Hresolved. intros model Hstore.
+  specialize (Hresolved model Hstore). contradiction.
 Qed.
 
 Lemma literal_is_true_complete_model : forall m l,
@@ -6393,11 +6455,8 @@ Lemma analyze_conflict_none_no_decisions : forall s cause l,
   analyze_conflict s cause = None ->
   ~ In (Decision l) s.(state_trail).
 Proof.
-  intros s cause l Hanalyze Hin. unfold analyze_conflict in Hanalyze.
-  destruct (negated_decisions s.(state_trail)) as [|x xs] eqn:Hdecisions;
-    [|discriminate].
-  pose proof (decision_in_negated_decisions _ _ Hin) as Hnegated.
-  now rewrite Hdecisions in Hnegated.
+  intros s cause l Hanalyze.
+  exact (proj1 (analyze_conflict_none_iff s cause) Hanalyze l).
 Qed.
 
 Lemma conflict_without_decisions_unsat : forall s cause,
@@ -6480,17 +6539,29 @@ Proof.
   - destruct (find_different_var (literal_var l) undecided); discriminate.
 Qed.
 
+Lemma pop_to_decision_after_model_suffix : forall learned after trail,
+  model_suffix (trail_model (pop_to_decision_after learned after trail))
+    (trail_model trail).
+Proof.
+  intros learned after trail. induction trail as [|entry trail IH] in after |- *.
+  - apply model_suffix_refl.
+  - destruct entry as [l|l cause]; cbn [pop_to_decision_after trail_model].
+    + destruct after.
+      * exists [l]. reflexivity.
+      * destruct (in_dec literal_eq_dec (opposite_literal l) learned).
+        -- exists [l]. reflexivity.
+        -- eapply model_suffix_trans; [apply IH|]. exists [l]. reflexivity.
+    + destruct (in_dec literal_eq_dec (opposite_literal l) learned).
+      * eapply model_suffix_trans; [apply IH|]. exists [l]. reflexivity.
+      * eapply model_suffix_trans; [apply IH|]. exists [l]. reflexivity.
+Qed.
+
 Lemma pop_to_decision_model_suffix : forall learned trail,
   model_suffix (trail_model (pop_to_decision learned trail))
     (trail_model trail).
 Proof.
-  intros learned trail. induction trail as [|entry trail IH].
-  - apply model_suffix_refl.
-  - destruct entry as [l|l cause]; cbn [pop_to_decision trail_model].
-    + destruct (in_dec literal_eq_dec (opposite_literal l) learned).
-      * exists [l]. reflexivity.
-      * eapply model_suffix_trans; [exact IH|]. exists [l]. reflexivity.
-    + eapply model_suffix_trans; [exact IH|]. exists [l]. reflexivity.
+  intros learned trail. unfold pop_to_decision.
+  apply pop_to_decision_after_model_suffix.
 Qed.
 
 Lemma reclassify_backtracked_inv : forall s learned pending,
@@ -6636,102 +6707,238 @@ Proof.
   - split; [exact Hlearned|exact Harity'].
 Qed.
 
-Lemma pop_negated_decisions_undecided : forall clauses learned trail,
-  trail_invariant clauses learned trail ->
-  negated_decisions trail <> [] ->
-  exists l, In l (negated_decisions trail) /\
-    literal_is_undecided
-      (pop_to_decision (negated_decisions trail) trail) l = true.
+Lemma literal_false_model_suffix_extension : forall model suffix l,
+  model_suffix suffix model ->
+  NoDup (map literal_var model) ->
+  literal_value suffix l = Some false ->
+  literal_value model l = Some false.
 Proof.
-  intros clauses learned trail. induction trail as [|entry trail IH];
-    intros Hinv Hnonempty; [contradiction|].
-  pose proof (trail_invariant_tail clauses learned entry trail Hinv) as Htail.
-  destruct entry as [decision|propagated cause].
-  - cbn [negated_decisions pop_to_decision].
-    destruct (in_dec literal_eq_dec (opposite_literal decision)
-      (opposite_literal decision :: negated_decisions trail)) as [Hin|Hnotin].
-    + exists (opposite_literal decision). split; [now left|].
-      destruct Hinv as [_ Hjustified]. cbn in Hjustified.
-      destruct Hjustified as [Hundecided _].
-      destruct decision as [v|v]; cbn [opposite_literal];
-        [rewrite <- literal_is_undecided_pos_neg|rewrite literal_is_undecided_pos_neg];
-        exact Hundecided.
-    + exfalso. apply Hnotin. now left.
-  - cbn [negated_decisions pop_to_decision] in Hnonempty |- *.
-    now apply IH.
+  intros model suffix l [prefix ->] Hnodup Hfalse.
+  induction prefix as [|assigned prefix IH]; cbn [app] in *; [exact Hfalse|].
+  inversion Hnodup as [|? ? Hfresh Hnodup']; subst.
+  apply literal_false_cons_undecided.
+  - apply not_InL_literal_undecided. rewrite InL_map_literal_var.
+    exact Hfresh.
+  - now apply IH.
 Qed.
 
-Lemma pop_negated_decisions_not_satisfied : forall clauses learned trail,
+Lemma resolve_clause_falsified : forall model suffix pivot left reason,
+  clause_falsified_by_model model left ->
+  clause_needs_literal suffix pivot reason ->
+  model_suffix suffix model ->
+  NoDup (map literal_var model) ->
+  clause_falsified_by_model model (resolve_clause pivot left reason).
+Proof.
+  intros model suffix pivot left reason Hleft Hneeds Hsuffix Hnodup l Hin.
+  unfold resolve_clause in Hin. apply in_clause_union in Hin as [Hin|Hin].
+  - apply in_without_literal in Hin as [Hin _]. now apply Hleft.
+  - apply in_without_literal in Hin as [Hin Hneq].
+    apply literal_false_model_suffix_extension with (suffix := suffix);
+      try assumption. now apply (proj2 Hneeds l Hin).
+Qed.
+
+Lemma analyze_conflict_trail_falsified :
+  forall clauses learned trail conflict model,
   trail_invariant clauses learned trail ->
-  negated_decisions trail <> [] ->
-  existsb
-    (literal_is_true (pop_to_decision (negated_decisions trail) trail))
-    (negated_decisions trail) = false.
+  model_suffix (trail_model trail) model ->
+  NoDup (map literal_var model) ->
+  clause_falsified_by_model model conflict ->
+  clause_falsified_by_model model
+    (analyze_conflict_trail clauses learned trail conflict).
 Proof.
   intros clauses learned trail. induction trail as [|entry trail IH];
-    intros Hinv Hnonempty; [contradiction|].
-  pose proof (trail_invariant_tail clauses learned entry trail Hinv) as Htail.
-  destruct entry as [decision|propagated cause].
-  - cbn [negated_decisions pop_to_decision].
-    destruct (in_dec literal_eq_dec (opposite_literal decision)
-      (opposite_literal decision :: negated_decisions trail)) as [Hin|Hnotin].
+    intros conflict model Htrail Hsuffix Hnodup Hfalse; [exact Hfalse|].
+  assert (Htail : trail_invariant clauses learned trail).
+  { now apply trail_invariant_tail with (entry := entry). }
+  assert (Htailsuffix : model_suffix (trail_model trail) model).
+  { eapply model_suffix_trans; [|exact Hsuffix].
+    exists [trail_literal entry]. reflexivity. }
+  destruct entry as [decision|propagated cause]; cbn [analyze_conflict_trail].
+  - eapply IH; eauto.
+  - destruct Htrail as [_ Hjustified]. cbn in Hjustified.
+    destruct Hjustified as [_ [reason [Hfind [Hneeds _]]]].
+    destruct (in_dec literal_eq_dec (opposite_literal propagated) conflict)
+      as [Hin|Hnotin].
+    + rewrite Hfind. eapply IH; eauto.
+      eapply resolve_clause_falsified; eauto.
+    + eapply IH; eauto.
+Qed.
+
+Lemma negated_decisions_falsified : forall s,
+  state_invariant s ->
+  clause_falsified_by_model s.(state_trail)
+    (negated_decisions s.(state_trail)).
+Proof.
+  intros s Hinv l Hin. apply negated_decisions_spec in Hin.
+  destruct Hin as [decision [Hdecision ->]].
+  pose proof (decisions_hold s decision Hinv Hdecision) as Htrue.
+  assert (Hopposite : forall model assigned,
+    literal_value model assigned = Some true ->
+    literal_value model (opposite_literal assigned) = Some false).
+  { intros model [v|v] Hassigned;
+      unfold literal_value in Hassigned |- *;
+      cbn [opposite_literal literal_var] in *;
+      destruct (find (fun l => Id.eqb (literal_var l) v) model)
+        as [[w|w]|]; try discriminate; reflexivity. }
+  now apply Hopposite.
+Qed.
+
+Lemma analyze_conflict_falsified : forall s conflict learned,
+  state_invariant s ->
+  clause_falsified_by_model s.(state_trail) conflict ->
+  analyze_conflict s conflict = Some learned ->
+  clause_falsified_by_model s.(state_trail) learned.
+Proof.
+  intros s conflict learned Hinv Hfalse Hanalyze.
+  destruct (analyze_conflict_some s conflict learned Hanalyze)
+    as [->|[Hempty ->]].
+  - eapply analyze_conflict_trail_falsified.
+    + now apply state_invariant_trail.
+    + apply model_suffix_refl.
+    + apply trail_invariant_vars_nodup with
+        (clauses := s.(state_clauses)) (learned := s.(state_learned)).
+      now apply state_invariant_trail.
+    + exact Hfalse.
+  - now apply negated_decisions_falsified.
+Qed.
+
+Lemma literal_false_tail_unless_opposite : forall model assigned l,
+  literal_is_undecided model assigned = true ->
+  literal_value (assigned :: model) l = Some false ->
+  l <> opposite_literal assigned ->
+  literal_value model l = Some false.
+Proof.
+  intros model [v|v] [w|w] Hundecided Hfalse Hnotopposite;
+    cbn [literal_var opposite_literal] in *;
+    destruct (Id.eq_dec v w) as [->|Hneq].
+  - unfold literal_value in Hfalse. cbn in Hfalse.
+    rewrite Id.eqb_refl in Hfalse. discriminate.
+  - rewrite literal_value_cons_other_var in Hfalse; [exact Hfalse|exact Hneq].
+  - exfalso. apply Hnotopposite. reflexivity.
+  - rewrite literal_value_cons_other_var in Hfalse; [exact Hfalse|exact Hneq].
+  - exfalso. apply Hnotopposite. reflexivity.
+  - rewrite literal_value_cons_other_var in Hfalse; [exact Hfalse|exact Hneq].
+  - unfold literal_value in Hfalse. cbn in Hfalse.
+    rewrite Id.eqb_refl in Hfalse. discriminate.
+  - rewrite literal_value_cons_other_var in Hfalse; [exact Hfalse|exact Hneq].
+Qed.
+
+Lemma opposite_undecided : forall model l,
+  literal_is_undecided model l = true ->
+  literal_is_undecided model (opposite_literal l) = true.
+Proof.
+  intros model [v|v] Hundecided; cbn [opposite_literal] in *.
+  - now rewrite <- literal_is_undecided_pos_neg.
+  - now rewrite literal_is_undecided_pos_neg.
+Qed.
+
+Lemma pop_falsified_clause_undecided : forall clauses learned trail c,
+  trail_invariant clauses learned trail ->
+  c <> [] ->
+  clause_falsified_by_model (trail_model trail) c ->
+  exists l, In l c /\
+    literal_is_undecided (trail_model (pop_to_decision c trail)) l = true.
+Proof.
+  intros clauses learned trail. induction trail as [|entry trail IH];
+    intros c Hinv Hnonempty Hfalse.
+  - destruct c as [|l c]; [contradiction|].
+    specialize (Hfalse l (or_introl eq_refl)). discriminate.
+  - pose proof (trail_invariant_tail clauses learned entry trail Hinv) as Htail.
+    destruct entry as [decision|propagated cause].
     + destruct Hinv as [_ Hjustified]. cbn in Hjustified.
       destruct Hjustified as [Hundecided _].
-      assert (literal_is_undecided (trail_model trail)
-          (opposite_literal decision) = true)
-        as Hopposite.
-      { destruct decision as [v|v]; cbn [opposite_literal];
-          [rewrite <- literal_is_undecided_pos_neg|rewrite literal_is_undecided_pos_neg];
-          exact Hundecided. }
-      assert (literal_is_true (trail_model trail)
-          (opposite_literal decision) = false) as Hnottrue.
-      { unfold literal_is_true, literal_is_undecided in Hopposite |- *.
-        destruct (literal_value (trail_model trail)
-          (opposite_literal decision)) as [[|]|]; try discriminate;
-          reflexivity. }
-      cbn [existsb]. rewrite Hnottrue. cbn.
-      apply negated_decisions_invalid. intros l Hl.
-      destruct Htail as [Hconsistent _].
-      apply consistent_model_literal_true; [exact Hconsistent|].
-      unfold trail_model. change (In (trail_literal (Decision l))
-        (map trail_literal trail)). now apply in_map.
-    + exfalso. apply Hnotin. now left.
-  - cbn [negated_decisions pop_to_decision] in Hnonempty |- *.
-    now apply IH.
+      cbn [pop_to_decision pop_to_decision_after] in *.
+      destruct (in_dec literal_eq_dec (opposite_literal decision) c)
+        as [Hin|Hnotin].
+      * exists (opposite_literal decision). split; [exact Hin|].
+        now apply opposite_undecided.
+      * apply IH; try assumption. intros l Hin.
+        eapply literal_false_tail_unless_opposite; eauto.
+        intros ->. contradiction.
+    + destruct Hinv as [_ Hjustified]. cbn in Hjustified.
+      destruct Hjustified as [Hundecided _].
+      cbn [pop_to_decision pop_to_decision_after] in *.
+      destruct (in_dec literal_eq_dec (opposite_literal propagated) c)
+        as [Hin|Hnotin].
+      * exists (opposite_literal propagated). split; [exact Hin|].
+        eapply undecided_model_suffix.
+        -- apply pop_to_decision_after_model_suffix.
+        -- now apply opposite_undecided.
+      * apply IH; try assumption. intros l Hin.
+        eapply literal_false_tail_unless_opposite; eauto.
+        intros ->. contradiction.
+Qed.
+
+Lemma literal_true_model_suffix_extension : forall model suffix l,
+  model_suffix suffix model ->
+  NoDup (map literal_var model) ->
+  literal_is_true suffix l = true ->
+  literal_is_true model l = true.
+Proof.
+  intros model suffix l [prefix ->] Hnodup Htrue.
+  induction prefix as [|assigned prefix IH]; cbn [app] in *; [exact Htrue|].
+  inversion Hnodup as [|? ? Hfresh Hnodup']; subst.
+  apply literal_is_true_cons_undecided.
+  - apply not_InL_literal_undecided. rewrite InL_map_literal_var.
+    exact Hfresh.
+  - now apply IH.
+Qed.
+
+Lemma falsified_clause_suffix_not_satisfied : forall model suffix c,
+  clause_falsified_by_model model c ->
+  model_suffix suffix model ->
+  NoDup (map literal_var model) ->
+  existsb (literal_is_true suffix) c = false.
+Proof.
+  intros model suffix c Hfalse Hsuffix Hnodup.
+  destruct (existsb (literal_is_true suffix) c) eqn:Hsatisfied;
+    [|reflexivity].
+  apply existsb_exists in Hsatisfied as [l [Hin Htrue]].
+  pose proof (literal_true_model_suffix_extension model suffix l Hsuffix
+    Hnodup Htrue) as Htrue'.
+  specialize (Hfalse l Hin). unfold literal_is_true in Htrue'.
+  rewrite Hfalse in Htrue'. discriminate.
+Qed.
+
+Lemma analyze_conflict_some_nonempty : forall s cause learned,
+  analyze_conflict s cause = Some learned -> learned <> [].
+Proof.
+  intros s cause learned Hanalyze. unfold analyze_conflict in Hanalyze.
+  destruct (negated_decisions s.(state_trail)) as [|decision decisions];
+    [discriminate|].
+  destruct (analyze_conflict_trail s.(state_clauses) s.(state_learned)
+    s.(state_trail) cause) as [|l analyzed]; injection Hanalyze as <-;
+    discriminate.
 Qed.
 
 Lemma analyzed_clause_undecided_after_pop : forall s cause learned,
   state_invariant s ->
+  clause_falsified_by_model s.(state_trail) cause ->
   analyze_conflict s cause = Some learned ->
   exists l, In l learned /\
     literal_is_undecided (pop_to_decision learned s.(state_trail)) l = true.
 Proof.
-  intros s cause learned Hinv Hanalyze.
-  pose proof (analyze_conflict_some s cause learned Hanalyze) as Heq.
-  assert (negated_decisions s.(state_trail) <> []) as Hnonempty.
-  { intros Hnil. unfold analyze_conflict in Hanalyze.
-    rewrite Hnil in Hanalyze. discriminate. }
-  pose proof (pop_negated_decisions_undecided s.(state_clauses)
-    s.(state_learned) s.(state_trail) (state_invariant_trail s Hinv)
-    Hnonempty) as Hresult.
-  now rewrite Heq in Hresult.
+  intros s cause learned Hinv Hcausefalse Hanalyze.
+  eapply pop_falsified_clause_undecided.
+  - now apply state_invariant_trail.
+  - exact (analyze_conflict_some_nonempty s cause learned Hanalyze).
+  - eapply analyze_conflict_falsified; eauto.
 Qed.
 
 Lemma analyzed_clause_not_satisfied_after_pop : forall s cause learned,
   state_invariant s ->
+  clause_falsified_by_model s.(state_trail) cause ->
   analyze_conflict s cause = Some learned ->
   existsb (literal_is_true (pop_to_decision learned s.(state_trail)))
     learned = false.
 Proof.
-  intros s cause learned Hinv Hanalyze.
-  pose proof (analyze_conflict_some s cause learned Hanalyze) as Heq.
-  assert (negated_decisions s.(state_trail) <> []) as Hnonempty.
-  { intros Hnil. unfold analyze_conflict in Hanalyze.
-    rewrite Hnil in Hanalyze. discriminate. }
-  pose proof (pop_negated_decisions_not_satisfied s.(state_clauses)
-    s.(state_learned) s.(state_trail) (state_invariant_trail s Hinv)
-    Hnonempty) as Hresult.
-  now rewrite Heq in Hresult.
+  intros s cause learned Hinv Hcausefalse Hanalyze.
+  eapply falsified_clause_suffix_not_satisfied.
+  - eapply analyze_conflict_falsified; eauto.
+  - apply pop_to_decision_model_suffix.
+  - apply trail_invariant_vars_nodup with
+      (clauses := s.(state_clauses)) (learned := s.(state_learned)).
+    now apply state_invariant_trail.
 Qed.
 
 Lemma backtrack_conflict_sound : forall s cause s' cause',
@@ -6765,13 +6972,14 @@ Proof.
     as Hlearnedfalse.
   { subst reset. cbn.
     exact (analyzed_clause_not_satisfied_after_pop s cause learned
-      Hinv Hanalyze). }
+      Hinv Hfalse Hanalyze). }
   destruct (add_learned reset learned) as [final|final finalcause] eqn:Hadd.
   - discriminate.
   - exfalso.
     destruct (add_learned_conflict_spec _ _ _ _ Hadd)
       as [_ [Hlearnedfalsified _]].
-    destruct (analyzed_clause_undecided_after_pop s cause learned Hinv Hanalyze)
+    destruct (analyzed_clause_undecided_after_pop s cause learned
+      Hinv Hfalse Hanalyze)
       as [l [Hlin Hlu]].
     specialize (Hlearnedfalsified l Hlin).
     pose proof (add_learned_result_trail _ _ _ Hadd) as Htrail.
@@ -6810,14 +7018,15 @@ Proof.
     as Hlearnedfalse.
   { subst reset. cbn.
     exact (analyzed_clause_not_satisfied_after_pop s cause learned
-      Hinv Hanalyze). }
+      Hinv Hfalse Hanalyze). }
   destruct (add_learned reset learned) as [final|final finalcause]
     eqn:Hadd.
   - discriminate.
   - exfalso.
     destruct (add_learned_conflict_spec _ _ _ _ Hadd)
       as [_ [Hlearnedfalsified _]].
-    destruct (analyzed_clause_undecided_after_pop s cause learned Hinv Hanalyze)
+    destruct (analyzed_clause_undecided_after_pop s cause learned
+      Hinv Hfalse Hanalyze)
       as [l [Hlin Hlu]].
     specialize (Hlearnedfalsified l Hlin).
     pose proof (add_learned_result_trail _ _ _ Hadd) as Htrail.
@@ -6866,7 +7075,7 @@ Proof.
     as Hlearnedfalse.
   { subst reset. cbn.
     exact (analyzed_clause_not_satisfied_after_pop s cause learned
-      Hinv Hanalyze). }
+      Hinv Hfalse Hanalyze). }
   destruct (add_learned reset learned) as [final|final finalcause]
     eqn:Hadd; [|discriminate].
   assert (state_invariant final) as Hfinalinv.
