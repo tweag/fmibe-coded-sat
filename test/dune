@@ -4,4 +4,16 @@
  (libraries fmibe_app))
 
 (cram
+ (applies_to solve_cli)
  (deps ../app/solve.exe sat.cnf unsat.cnf root-unit.cnf backtrack.cnf))
+
+(cram
+ (applies_to assumptions)
+ (deps
+  assumptions.v
+  ../src/Id.vo
+  ../src/FiniteMap.vo
+  ../src/ListMap.vo
+  ../src/Map.vo
+  ../src/CDCL/Impl.vo
+  ../src/CDCL/Spec.vo))
