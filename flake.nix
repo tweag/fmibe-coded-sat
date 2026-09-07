@@ -57,6 +57,8 @@
           packages = [
             pkgs.codex
             pkgs.git
+            pkgs.just
+            pkgs.perf
             opamScope.cmdliner
             opamScope.dolmen
             opamScope.dune
