@@ -17,8 +17,7 @@ profile duration="120" input=profile_input output=profile_output:
     perf record -e cpu-clock:u -F 99 --call-graph dwarf,16384 \
       --output "$raw" -- \
       timeout --signal=TERM --kill-after=5s "${duration}s" \
-        bash -c 'while "$@"; do :; done' profile-loop \
-          _build_profile/default/app/solve.exe bench sat "$input"
+        _build_profile/default/app/solve.exe bench sat "$input"
     status=$?
     set -e
     if [[ $status -ne 0 && $status -ne 124 ]]; then
