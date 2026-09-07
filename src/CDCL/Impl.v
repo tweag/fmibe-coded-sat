@@ -546,7 +546,8 @@ Module ClauseMap.
     intros m x l. unfold card_of, elements.
     assert (Hkeys : Buckets.keys (add l x m) =
       if in_dec VarKey.eq_dec (literal_var l) (Buckets.keys m)
-      then Buckets.keys m else literal_var l :: Buckets.keys m) by reflexivity.
+      then Buckets.keys m else literal_var l :: Buckets.keys m).
+    { apply Buckets.keys_add_eq. }
     rewrite Hkeys.
     destruct (in_dec VarKey.eq_dec (literal_var l) (Buckets.keys m))
       as [Hin|Hnotin] eqn:Hmem.
@@ -570,7 +571,8 @@ Module ClauseMap.
     intros m x y l Hneq. unfold card_of, elements.
     assert (Hkeys : Buckets.keys (add l x m) =
       if in_dec VarKey.eq_dec (literal_var l) (Buckets.keys m)
-      then Buckets.keys m else literal_var l :: Buckets.keys m) by reflexivity.
+      then Buckets.keys m else literal_var l :: Buckets.keys m).
+    { apply Buckets.keys_add_eq. }
     rewrite Hkeys.
     destruct (in_dec VarKey.eq_dec (literal_var l) (Buckets.keys m))
       as [Hin|Hnotin] eqn:Hmem.
@@ -619,7 +621,8 @@ Module ClauseMap.
     intros m x v. unfold card_of, elements.
     assert (Hkeys : Buckets.keys (remove v m) =
       filter (fun v' => if VarKey.eq_dec v v' then false else true)
-        (Buckets.keys m)) by reflexivity.
+        (Buckets.keys m)).
+    { apply Buckets.keys_remove_eq. }
     rewrite Hkeys.
     assert (Hflat : forall ks,
       flat_map (fun v' => find v' (remove v m)) ks =
@@ -1143,10 +1146,16 @@ Definition backtrack_trail (learned : Clause) (trail : Trail) : Trail :=
   else pop_to_root trail.
 
 Definition fresh_clause_id (s : State) : ClauseId :=
-  Id.fresh (ClauseStore.keys s.(state_clauses)).
+  match ClauseStore.maximum s.(state_clauses) with
+  | None => Id.of_nat 0
+  | Some greatest => Id.next greatest
+  end.
 
 Definition fresh_learned_clause_id (s : State) : ClauseId :=
-  Id.fresh (ClauseStore.keys s.(state_learned)).
+  match ClauseStore.maximum s.(state_learned) with
+  | None => Id.of_nat 0
+  | Some greatest => Id.next greatest
+  end.
 
 Variant clause_destination := OriginalClause | LearnedClause.
 

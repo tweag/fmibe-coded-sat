@@ -1291,13 +1291,25 @@ Qed.
 Lemma fresh_clause_id_not_in : forall s,
   ~ In (fresh_clause_id s) (ClauseStore.keys s.(state_clauses)).
 Proof.
-  intros s. unfold fresh_clause_id. apply Id.fresh_not_in.
+  intros s Hin. unfold fresh_clause_id in Hin.
+  destruct (ClauseStore.maximum s.(state_clauses)) as [greatest|]
+    eqn:Hmax.
+  - apply (ClauseStore.maximum_upper s.(state_clauses) greatest
+      (Id.next greatest) Hmax Hin).
+    exact (Id.next_strict greatest).
+  - rewrite (ClauseStore.maximum_none _ Hmax) in Hin. contradiction.
 Qed.
 
 Lemma fresh_learned_clause_id_not_in : forall s,
   ~ In (fresh_learned_clause_id s) (ClauseStore.keys s.(state_learned)).
 Proof.
-  intros s. unfold fresh_learned_clause_id. apply Id.fresh_not_in.
+  intros s Hin. unfold fresh_learned_clause_id in Hin.
+  destruct (ClauseStore.maximum s.(state_learned)) as [greatest|]
+    eqn:Hmax.
+  - apply (ClauseStore.maximum_upper s.(state_learned) greatest
+      (Id.next greatest) Hmax Hin).
+    exact (Id.next_strict greatest).
+  - rewrite (ClauseStore.maximum_none _ Hmax) in Hin. contradiction.
 Qed.
 
 Lemma fresh_clause_id_fresh : forall s,

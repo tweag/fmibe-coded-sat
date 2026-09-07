@@ -1,5 +1,4 @@
 Require Import Stdlib.Arith.PeanoNat.
-Require Import Stdlib.Lists.List.
 Require Import Stdlib.micromega.Lia.
 
 Module Type S.
@@ -16,8 +15,9 @@ Module Type S.
   Axiom to_nat_of_nat : forall n, to_nat (of_nat n) = n.
   Axiom of_nat_to_nat : forall x, of_nat (to_nat x) = x.
 
-  Parameter fresh : list t -> t.
-  Axiom fresh_not_in : forall ids, ~ In (fresh ids) ids.
+  Parameter next : t -> t.
+  Axiom next_strict : forall x, to_nat x < to_nat (next x).
+
 End S.
 
 (* Keep the representation private so clients use only the identifier
@@ -42,21 +42,8 @@ Module Id : S.
   Lemma of_nat_to_nat : forall x, of_nat (to_nat x) = x.
   Proof. reflexivity. Qed.
 
-  Lemma fold_max_ge : forall xs x,
-    In x xs -> x <= fold_right Nat.max 0 xs.
-  Proof.
-    intros xs. induction xs as [|y ys IH]; intros x Hin; [contradiction|].
-    simpl. destruct Hin as [->|Hin].
-    - apply Nat.le_max_l.
-    - eapply Nat.le_trans; [now apply IH|apply Nat.le_max_r].
-  Qed.
+  Definition next (x : t) : t := S x.
+  Lemma next_strict : forall x, to_nat x < to_nat (next x).
+  Proof. intros x. unfold to_nat, next. lia. Qed.
 
-  Definition fresh (ids : list t) : t :=
-    S (fold_right Nat.max 0 ids).
-
-  Lemma fresh_not_in : forall ids, ~ In (fresh ids) ids.
-  Proof.
-    intros ids Hin. unfold fresh in Hin.
-    pose proof (fold_max_ge _ _ Hin). lia.
-  Qed.
 End Id.

@@ -31,6 +31,7 @@ Module Type MapSig (Key : OrderedKey) (Value : ValueType).
   Parameter empty : t.
   Parameter find : Key.t -> t -> option Value.t.
   Parameter keys : t -> list Key.t.
+  Parameter maximum : t -> option Key.t.
   Parameter add : Key.t -> Value.t -> t -> t.
   Parameter remove : Key.t -> t -> t.
 
@@ -44,6 +45,10 @@ Module Type MapSig (Key : OrderedKey) (Value : ValueType).
   Axiom keys_nodup : forall m, NoDup (keys m).
   Axiom keys_complete : forall m k,
     find k m <> None <-> In k (keys m).
+  Axiom maximum_none : forall m,
+    maximum m = None -> keys m = [].
+  Axiom maximum_upper : forall m greatest k,
+    maximum m = Some greatest -> In k (keys m) -> ~ Key.lt greatest k.
 End MapSig.
 
 Module Make (Key : OrderedKey) (Value : ValueType) : MapSig Key Value.
@@ -65,6 +70,7 @@ Module Make (Key : OrderedKey) (Value : ValueType) : MapSig Key Value.
 
   Definition keys (m : t) : list Key.t :=
     filter (fun k => present (find k m)) (Base.keys m).
+  Definition maximum (m : t) : option Key.t := Base.maximum m.
 
   Lemma find_empty : forall k, find k empty = None.
   Proof. exact Base.find_empty. Qed.
@@ -95,5 +101,23 @@ Module Make (Key : OrderedKey) (Value : ValueType) : MapSig Key Value.
     - intros Hfind. split; [now apply Base.keys_complete|].
       destruct (find k m); [reflexivity|contradiction].
     - intros [_ Hpresent]. destruct (find k m); discriminate.
+  Qed.
+
+  Lemma maximum_none : forall m,
+    maximum m = None -> keys m = [].
+  Proof.
+    intros m Hmaximum. unfold maximum in Hmaximum.
+    pose proof (Base.maximum_spec m) as Hspec. rewrite Hmaximum in Hspec.
+    unfold keys. now rewrite Hspec.
+  Qed.
+
+  Lemma maximum_upper : forall m greatest k,
+    maximum m = Some greatest -> In k (keys m) -> ~ Key.lt greatest k.
+  Proof.
+    intros m greatest k Hmaximum Hin.
+    unfold maximum in Hmaximum.
+    pose proof (Base.maximum_spec m) as Hspec. rewrite Hmaximum in Hspec.
+    destruct Hspec as [_ Hgreatest]. apply Hgreatest.
+    unfold keys in Hin. now apply filter_In in Hin.
   Qed.
 End Make.
