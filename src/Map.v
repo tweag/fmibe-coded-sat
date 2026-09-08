@@ -91,7 +91,7 @@ Module Make (Key : OrderedKey) (Value : ValueType) : MapSig Key Value.
   Lemma keys_nodup : forall m, NoDup (keys m).
   Proof.
     intros m. unfold keys. apply NoDup_filter.
-    exact (proj1 (Base.support_spec m)).
+    apply Base.keys_nodup.
   Qed.
 
   Lemma keys_complete : forall m k,

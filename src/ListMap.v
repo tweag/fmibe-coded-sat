@@ -2,6 +2,7 @@ Require Import Stdlib.Lists.List.
 Import ListNotations.
 Require Import Stdlib.micromega.Lia.
 Require Import Stdlib.Logic.FunctionalExtensionality.
+Require Import Stdlib.Sorting.Permutation.
 Require Import FMV.FiniteMap.
 
 Module ListMonoid (Element : DecidableType) <: Monoid.
@@ -97,9 +98,9 @@ Module Make (Key : OrderedKey) (Element : DecidableType) <: ListMapSig Key Eleme
     - intros [_ H]. destruct (find k m); discriminate.
   Qed.
 
-  Lemma lookup_notin_support : forall m k,
+  Lemma lookup_notin_keys : forall m k,
     ~ In k (Base.keys m) -> find k m = [].
-  Proof. exact Base.lookup_notin_support. Qed.
+  Proof. exact Base.lookup_notin_keys. Qed.
 
   Lemma find_add_eq : forall m x k k',
     find k' (add k x m) =
@@ -156,19 +157,29 @@ Module Make (Key : OrderedKey) (Element : DecidableType) <: ListMapSig Key Eleme
     card_of x (add k x m) = S (card_of x m).
   Proof.
     intros m x k. unfold card_of, elements, add, find.
-    rewrite Base.keys_add_eq.
+    pose proof (Base.keys_add_permutation m [x] k) as Hkeys.
+    assert (Permutation
+      (flat_map (fun k' => Base.find k' (Base.add k [x] m))
+        (Base.keys (Base.add k [x] m)))
+      (flat_map (fun k' => Base.find k' (Base.add k [x] m))
+        (if in_dec Key.eq_dec k (Base.keys m)
+         then Base.keys m else k :: Base.keys m))) as Helements.
+    { now apply Permutation_flat_map. }
+    assert (Hcount := Helements).
+    rewrite (Permutation_count_occ Element.eq_dec) in Hcount.
+    rewrite (Hcount x).
     assert ((fun k' => Base.find k' (Base.add k [x] m)) =
       (fun k' => if Key.eq_dec k k' then x :: Base.find k' m
         else Base.find k' m)) as Hfind.
     { apply functional_extensionality. intros k'. apply Base.find_add_eq. }
-    rewrite Hfind. unfold Base.keys.
-    destruct (in_dec Key.eq_dec k (Base.support m)) as [Hin|Hnotin].
+    rewrite Hfind.
+    destruct (in_dec Key.eq_dec k (Base.keys m)) as [Hin|Hnotin].
     - rewrite count_occ_flat_map_add_present;
-        [|exact (proj1 (Base.support_spec m))|exact Hin].
+        [|apply Base.keys_nodup|exact Hin].
       simpl. destruct (Element.eq_dec x x); [reflexivity|contradiction].
     - simpl. destruct (Key.eq_dec k k) as [_|Habs]; [|contradiction].
       assert (Base.find k m = []) as Hempty.
-      { unfold Base.find. now apply Base.lookup_notin_support. }
+      { unfold Base.find. now apply Base.lookup_notin_keys. }
       rewrite Hempty.
       rewrite !count_occ_app, count_occ_flat_map_add_absent by exact Hnotin.
       simpl. destruct (Element.eq_dec x x); [reflexivity|contradiction].
@@ -178,19 +189,29 @@ Module Make (Key : OrderedKey) (Element : DecidableType) <: ListMapSig Key Eleme
     x <> y -> card_of y (add k x m) = card_of y m.
   Proof.
     intros m x y k Hneq. unfold card_of, elements, add, find.
-    rewrite Base.keys_add_eq.
+    pose proof (Base.keys_add_permutation m [x] k) as Hkeys.
+    assert (Permutation
+      (flat_map (fun k' => Base.find k' (Base.add k [x] m))
+        (Base.keys (Base.add k [x] m)))
+      (flat_map (fun k' => Base.find k' (Base.add k [x] m))
+        (if in_dec Key.eq_dec k (Base.keys m)
+         then Base.keys m else k :: Base.keys m))) as Helements.
+    { now apply Permutation_flat_map. }
+    assert (Hcount := Helements).
+    rewrite (Permutation_count_occ Element.eq_dec) in Hcount.
+    rewrite (Hcount y).
     assert ((fun k' => Base.find k' (Base.add k [x] m)) =
       (fun k' => if Key.eq_dec k k' then x :: Base.find k' m
         else Base.find k' m)) as Hfind.
     { apply functional_extensionality. intros k'. apply Base.find_add_eq. }
-    rewrite Hfind. unfold Base.keys.
-    destruct (in_dec Key.eq_dec k (Base.support m)) as [Hin|Hnotin].
+    rewrite Hfind.
+    destruct (in_dec Key.eq_dec k (Base.keys m)) as [Hin|Hnotin].
     - rewrite count_occ_flat_map_add_present;
-        [|exact (proj1 (Base.support_spec m))|exact Hin].
+        [|apply Base.keys_nodup|exact Hin].
       simpl. destruct (Element.eq_dec x y); [contradiction|reflexivity].
     - simpl. destruct (Key.eq_dec k k) as [_|Habs]; [|contradiction].
       assert (Base.find k m = []) as Hempty.
-      { unfold Base.find. now apply Base.lookup_notin_support. }
+      { unfold Base.find. now apply Base.lookup_notin_keys. }
       rewrite Hempty.
       rewrite !count_occ_app, count_occ_flat_map_add_absent by exact Hnotin.
       simpl. destruct (Element.eq_dec x y); [contradiction|reflexivity].
@@ -224,14 +245,24 @@ Module Make (Key : OrderedKey) (Element : DecidableType) <: ListMapSig Key Eleme
       card_of x m.
   Proof.
     intros m x k. unfold card_of, elements, remove, find.
-    rewrite Base.keys_remove_eq.
+    pose proof (Base.keys_remove_permutation m k) as Hkeys.
+    assert (Permutation
+      (flat_map (fun k' => Base.find k' (Base.remove k m))
+        (Base.keys (Base.remove k m)))
+      (flat_map (fun k' => Base.find k' (Base.remove k m))
+        (filter (fun k' => if Key.eq_dec k k' then false else true)
+          (Base.keys m)))) as Helements.
+    { now apply Permutation_flat_map. }
+    assert (Hcount := Helements).
+    rewrite (Permutation_count_occ Element.eq_dec) in Hcount.
+    rewrite (Hcount x).
     assert ((fun k' => Base.find k' (Base.remove k m)) =
       (fun k' => if Key.eq_dec k k' then [] else Base.find k' m)) as Hfind.
     { apply functional_extensionality. intros k'. apply Base.find_remove_eq. }
-    rewrite Hfind. unfold Base.keys.
-    destruct (in_dec Key.eq_dec k (Base.support m)) as [Hin|Hnotin].
+    rewrite Hfind.
+    destruct (in_dec Key.eq_dec k (Base.keys m)) as [Hin|Hnotin].
     - apply in_split in Hin as [before [after Hsupport]].
-      pose proof (proj1 (Base.support_spec m)) as Hnodup.
+      assert (NoDup (Base.keys m)) as Hnodup by apply Base.keys_of_nodup.
       rewrite Hsupport in Hnodup |- *.
       rewrite filter_app. simpl.
       destruct (Key.eq_dec k k) as [_|Habs]; [|contradiction]. simpl.
@@ -252,14 +283,14 @@ Module Make (Key : OrderedKey) (Element : DecidableType) <: ListMapSig Key Eleme
       set (na := count_occ Element.eq_dec
         (flat_map (fun k => Base.lookup m k) after) x).
       change (nb + na + nk = nb + (nk + na)). lia.
-    - rewrite (filter_remove_absent (Base.support m) k Hnotin).
+    - rewrite (filter_remove_absent (Base.keys m) k Hnotin).
       erewrite flat_map_remove_absent by exact Hnotin.
-      unfold Base.find. rewrite (Base.lookup_notin_support m k Hnotin).
+      unfold Base.find. rewrite (Base.lookup_notin_keys m k Hnotin).
       simpl.
       change (count_occ Element.eq_dec
-        (flat_map (fun k => Base.lookup m k) (Base.support m)) x + 0 =
+        (flat_map (fun k => Base.lookup m k) (Base.keys m)) x + 0 =
         count_occ Element.eq_dec
-          (flat_map (fun k => Base.lookup m k) (Base.support m)) x).
+          (flat_map (fun k => Base.lookup m k) (Base.keys m)) x).
       lia.
   Qed.
 

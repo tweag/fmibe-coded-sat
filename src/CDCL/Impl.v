@@ -6,6 +6,7 @@ Require Import Stdlib.Arith.PeanoNat.
 Require Import Stdlib.Arith.Arith.
 Require Import Stdlib.micromega.Lia.
 Require Import Stdlib.Structures.OrderedType.
+Require Import Stdlib.Sorting.Permutation.
 Require Import FMV.FiniteMap.
 Require Import FMV.ListMap.
 Require Import FMV.Map.
@@ -544,15 +545,22 @@ Module ClauseMap.
     card_of x (add l x m) = S (card_of x m).
   Proof.
     intros m x l. unfold card_of, elements.
-    assert (Hkeys : Buckets.keys (add l x m) =
-      if in_dec VarKey.eq_dec (literal_var l) (Buckets.keys m)
-      then Buckets.keys m else literal_var l :: Buckets.keys m).
-    { apply Buckets.keys_add_eq. }
-    rewrite Hkeys.
+    pose proof (Buckets.keys_add_permutation m (singleton_watch l x)
+      (literal_var l)) as Hkeys.
+    assert (Permutation
+      (flat_map (fun v => find v (add l x m)) (Buckets.keys (add l x m)))
+      (flat_map (fun v => find v (add l x m))
+        (if in_dec VarKey.eq_dec (literal_var l) (Buckets.keys m)
+         then Buckets.keys m else literal_var l :: Buckets.keys m)))
+      as Helements.
+    { now apply Permutation_flat_map. }
+    assert (Hcount := Helements).
+    rewrite (Permutation_count_occ clause_pointer_eq_dec) in Hcount.
+    rewrite (Hcount x).
     destruct (in_dec VarKey.eq_dec (literal_var l) (Buckets.keys m))
       as [Hin|Hnotin] eqn:Hmem.
     - rewrite count_occ_flat_map_add_present;
-        [|exact (proj1 (Buckets.support_spec m))|exact Hin].
+        [|apply Buckets.keys_nodup|exact Hin].
       simpl. destruct (clause_pointer_eq_dec x x); [lia|contradiction].
     - cbn [flat_map]. rewrite count_occ_app, count_occ_find_add.
       destruct (VarKey.eq_dec (literal_var l) (literal_var l));
@@ -560,7 +568,7 @@ Module ClauseMap.
       rewrite count_occ_flat_map_add_absent by exact Hnotin.
       assert (Hempty : find (literal_var l) m = []).
       { unfold find, find_pos, find_neg, Buckets.find.
-        rewrite (Buckets.lookup_notin_support m (literal_var l) Hnotin).
+        rewrite (Buckets.lookup_notin_keys m (literal_var l) Hnotin).
         reflexivity. }
       rewrite Hempty. simpl. destruct (clause_pointer_eq_dec x x);
         [lia|contradiction].
@@ -569,15 +577,22 @@ Module ClauseMap.
     x <> y -> card_of y (add l x m) = card_of y m.
   Proof.
     intros m x y l Hneq. unfold card_of, elements.
-    assert (Hkeys : Buckets.keys (add l x m) =
-      if in_dec VarKey.eq_dec (literal_var l) (Buckets.keys m)
-      then Buckets.keys m else literal_var l :: Buckets.keys m).
-    { apply Buckets.keys_add_eq. }
-    rewrite Hkeys.
+    pose proof (Buckets.keys_add_permutation m (singleton_watch l x)
+      (literal_var l)) as Hkeys.
+    assert (Permutation
+      (flat_map (fun v => find v (add l x m)) (Buckets.keys (add l x m)))
+      (flat_map (fun v => find v (add l x m))
+        (if in_dec VarKey.eq_dec (literal_var l) (Buckets.keys m)
+         then Buckets.keys m else literal_var l :: Buckets.keys m)))
+      as Helements.
+    { now apply Permutation_flat_map. }
+    assert (Hcount := Helements).
+    rewrite (Permutation_count_occ clause_pointer_eq_dec) in Hcount.
+    rewrite (Hcount y).
     destruct (in_dec VarKey.eq_dec (literal_var l) (Buckets.keys m))
       as [Hin|Hnotin] eqn:Hmem.
     - rewrite count_occ_flat_map_add_present;
-        [|exact (proj1 (Buckets.support_spec m))|exact Hin].
+        [|apply Buckets.keys_nodup|exact Hin].
       simpl. destruct (clause_pointer_eq_dec x y); [contradiction|lia].
     - cbn [flat_map]. rewrite count_occ_app, count_occ_find_add.
       destruct (VarKey.eq_dec (literal_var l) (literal_var l));
@@ -585,7 +600,7 @@ Module ClauseMap.
       rewrite count_occ_flat_map_add_absent by exact Hnotin.
       assert (Hempty : find (literal_var l) m = []).
       { unfold find, find_pos, find_neg, Buckets.find.
-        rewrite (Buckets.lookup_notin_support m (literal_var l) Hnotin).
+        rewrite (Buckets.lookup_notin_keys m (literal_var l) Hnotin).
         reflexivity. }
       rewrite Hempty. simpl. destruct (clause_pointer_eq_dec x y);
         [contradiction|lia].
@@ -619,21 +634,27 @@ Module ClauseMap.
     card_of x m.
   Proof.
     intros m x v. unfold card_of, elements.
-    assert (Hkeys : Buckets.keys (remove v m) =
-      filter (fun v' => if VarKey.eq_dec v v' then false else true)
-        (Buckets.keys m)).
-    { apply Buckets.keys_remove_eq. }
-    rewrite Hkeys.
+    pose proof (Buckets.keys_remove_permutation m v) as Hkeys.
+    assert (Permutation
+      (flat_map (fun v' => find v' (remove v m)) (Buckets.keys (remove v m)))
+      (flat_map (fun v' => find v' (remove v m))
+        (filter (fun v' => if VarKey.eq_dec v v' then false else true)
+          (Buckets.keys m)))) as Helements.
+    { now apply Permutation_flat_map. }
+    assert (Hcount := Helements).
+    rewrite (Permutation_count_occ clause_pointer_eq_dec) in Hcount.
+    rewrite (Hcount x).
     assert (Hflat : forall ks,
       flat_map (fun v' => find v' (remove v m)) ks =
       flat_map (fun v' => if VarKey.eq_dec v v' then [] else find v' m) ks).
     { intros ks. induction ks as [|v' ks IH]; [reflexivity|]. simpl.
       rewrite IH. unfold find. rewrite find_pos_remove, find_neg_remove.
       destruct (VarKey.eq_dec v v'); reflexivity. }
-    rewrite Hflat. unfold Buckets.keys.
-    destruct (in_dec VarKey.eq_dec v (Buckets.support m)) as [Hin|Hnotin].
+    rewrite Hflat.
+    destruct (in_dec VarKey.eq_dec v (Buckets.keys m)) as [Hin|Hnotin].
     - apply in_split in Hin as [before [after Hsupport]].
-      pose proof (proj1 (Buckets.support_spec m)) as Hnodup.
+      assert (NoDup (Buckets.keys m)) as Hnodup by
+        apply Buckets.keys_of_nodup.
       rewrite Hsupport in Hnodup |- *.
       rewrite filter_app. simpl.
       destruct (VarKey.eq_dec v v) as [_|Habs]; [|contradiction]. simpl.
@@ -654,11 +675,11 @@ Module ClauseMap.
       set (na := count_occ clause_pointer_eq_dec
         (flat_map (fun v => find v m) after) x).
       change (nb + na + nv = nb + (nv + na)). lia.
-    - rewrite (filter_remove_absent (Buckets.support m) v Hnotin).
+    - rewrite (filter_remove_absent (Buckets.keys m) v Hnotin).
       erewrite flat_map_remove_absent by exact Hnotin.
       assert (Hempty : find v m = []).
       { unfold find, find_pos, find_neg, Buckets.find.
-        rewrite (Buckets.lookup_notin_support m v Hnotin). reflexivity. }
+        rewrite (Buckets.lookup_notin_keys m v Hnotin). reflexivity. }
       rewrite Hempty. simpl. lia.
   Qed.
 
@@ -667,7 +688,18 @@ Module ClauseMap.
       count_occ clause_pointer_eq_dec (find_literal l m) x = card_of x m.
   Proof.
     intros m x [v|v]; unfold card_of, elements.
-    - change
+    - pose proof (Buckets.keys_map_at_permutation m v clear_pos eq_refl)
+        as Hkeys_clear.
+      assert (Permutation
+        (flat_map (fun w => find w (clear_literal (Pos v) m))
+          (Buckets.keys (clear_literal (Pos v) m)))
+        (flat_map (fun w => find w (clear_literal (Pos v) m))
+          (Buckets.keys m))) as Helements.
+      { now apply Permutation_flat_map. }
+      assert (Hcount := Helements).
+      rewrite (Permutation_count_occ clause_pointer_eq_dec) in Hcount.
+      rewrite (Hcount x).
+      change
         (count_occ clause_pointer_eq_dec
            (flat_map (fun w => find w (clear_literal (Pos v) m))
              (Buckets.keys m)) x +
@@ -676,8 +708,8 @@ Module ClauseMap.
            (flat_map (fun w => find w m) (Buckets.keys m)) x).
       destruct (in_dec VarKey.eq_dec v (Buckets.keys m)) as [Hin|Hnotin].
       + apply in_split in Hin as [before [after Hkeys]].
-        pose proof (proj1 (Buckets.support_spec m)) as Hnodup.
-        change (NoDup (Buckets.keys m)) in Hnodup.
+        assert (NoDup (Buckets.keys m)) as Hnodup by
+          apply Buckets.keys_of_nodup.
         rewrite Hkeys in Hnodup |- *.
         pose proof (NoDup_remove_2 _ _ _ Hnodup) as Hnotinrest.
         assert (~ In v before) as Hbefore.
@@ -698,9 +730,20 @@ Module ClauseMap.
       + rewrite flat_map_clear_other by exact Hnotin.
         assert (Hempty : find_pos v m = []).
         { unfold find_pos, Buckets.find.
-          rewrite (Buckets.lookup_notin_support m v Hnotin). reflexivity. }
+          rewrite (Buckets.lookup_notin_keys m v Hnotin). reflexivity. }
         now rewrite Hempty.
-    - change
+    - pose proof (Buckets.keys_map_at_permutation m v clear_neg eq_refl)
+        as Hkeys_clear.
+      assert (Permutation
+        (flat_map (fun w => find w (clear_literal (Neg v) m))
+          (Buckets.keys (clear_literal (Neg v) m)))
+        (flat_map (fun w => find w (clear_literal (Neg v) m))
+          (Buckets.keys m))) as Helements.
+      { now apply Permutation_flat_map. }
+      assert (Hcount := Helements).
+      rewrite (Permutation_count_occ clause_pointer_eq_dec) in Hcount.
+      rewrite (Hcount x).
+      change
         (count_occ clause_pointer_eq_dec
            (flat_map (fun w => find w (clear_literal (Neg v) m))
              (Buckets.keys m)) x +
@@ -709,8 +752,8 @@ Module ClauseMap.
            (flat_map (fun w => find w m) (Buckets.keys m)) x).
       destruct (in_dec VarKey.eq_dec v (Buckets.keys m)) as [Hin|Hnotin].
       + apply in_split in Hin as [before [after Hkeys]].
-        pose proof (proj1 (Buckets.support_spec m)) as Hnodup.
-        change (NoDup (Buckets.keys m)) in Hnodup.
+        assert (NoDup (Buckets.keys m)) as Hnodup by
+          apply Buckets.keys_of_nodup.
         rewrite Hkeys in Hnodup |- *.
         pose proof (NoDup_remove_2 _ _ _ Hnodup) as Hnotinrest.
         assert (~ In v before) as Hbefore.
@@ -731,7 +774,7 @@ Module ClauseMap.
       + rewrite flat_map_clear_other by exact Hnotin.
         assert (Hempty : find_neg v m = []).
         { unfold find_neg, Buckets.find.
-          rewrite (Buckets.lookup_notin_support m v Hnotin). reflexivity. }
+          rewrite (Buckets.lookup_notin_keys m v Hnotin). reflexivity. }
         now rewrite Hempty.
   Qed.
   Lemma card_of_unique : forall m x v v',
