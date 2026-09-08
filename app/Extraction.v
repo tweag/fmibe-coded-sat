@@ -2,6 +2,7 @@ Require Import FMV.CDCL.Impl.
 Require Import Stdlib.extraction.Extraction.
 Require Import Stdlib.extraction.ExtrOcamlBasic.
 Require Import Stdlib.extraction.ExtrOcamlNatInt.
+Require Import Stdlib.extraction.ExtrOcamlZInt.
 
 Extraction Language OCaml.
 Set Extraction Output Directory ".".
