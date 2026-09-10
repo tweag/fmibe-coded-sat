@@ -110,6 +110,12 @@ End IdOrderedKey.
 Module VarKey := IdOrderedKey.
 Module ClauseIdKey := IdOrderedKey.
 
+Module TruthValue.
+  Definition t := bool.
+End TruthValue.
+
+Module Assignment := Map.Make VarKey TruthValue.
+
 Definition clause_pointer_eq_dec (l r : ClausePointer) : {l = r} + {l <> r}.
 Proof.
   decide equality; apply Id.eq_dec.
@@ -851,6 +857,7 @@ Module ClauseStore := Map.Make ClauseIdKey ClauseValue.
 
 Record State := {
   state_trail : Trail;
+  state_assignment : Assignment.t;
   state_clauses : ClauseStore.t;
   state_learned : ClauseStore.t;
   (* `state_watched` implements two-literal watch. *)
@@ -860,6 +867,7 @@ Record State := {
 
 Definition empty_state : State :=
   {| state_trail := [];
+     state_assignment := Assignment.empty;
      state_clauses := ClauseStore.empty;
      state_learned := ClauseStore.empty;
      state_watched := ClauseMap.empty;
@@ -875,34 +883,62 @@ Definition find_clause_in (clauses learned : ClauseStore.t)
 Definition find_clause (ci : ClausePointer) (s : State) : option Clause :=
   find_clause_in s.(state_clauses) s.(state_learned) ci.
 
-Definition var_is_assigned (m : Model) (v : Var) : bool :=
-  existsb (fun l => Id.eqb (literal_var l) v) m.
-
-Definition literal_value (m : Model) (l : Literal) : option bool :=
-  match find (fun l' => Id.eqb (literal_var l') (literal_var l)) m with
+Definition literal_value (assignment : Assignment.t) (l : Literal)
+    : option bool :=
+  match Assignment.find (literal_var l) assignment with
   | None => None
-  | Some (Pos _) =>
-      match l with Pos _ => Some true | Neg _ => Some false end
-  | Some (Neg _) =>
-      match l with Pos _ => Some false | Neg _ => Some true end
+  | Some value =>
+      match l with Pos _ => Some value | Neg _ => Some (negb value) end
   end.
 
-Definition literal_is_true (m : Model) (l : Literal) : bool :=
-  match literal_value m l with Some true => true | _ => false end.
+Definition var_is_assigned (assignment : Assignment.t) (v : Var) : bool :=
+  match Assignment.find v assignment with Some _ => true | None => false end.
 
-Definition literal_is_undecided (m : Model) (l : Literal) : bool :=
-  match literal_value m l with None => true | _ => false end.
+Definition assignment_set_literal (l : Literal) (assignment : Assignment.t)
+    : Assignment.t :=
+  match l with
+  | Pos v => Assignment.add v true assignment
+  | Neg v => Assignment.add v false assignment
+  end.
 
-Definition literal_is_decided (m : Model) (l : Literal) : Prop :=
-  literal_is_undecided m l = false.
+Fixpoint assignment_remove_entries (count : nat) (trail : Trail)
+    (assignment : Assignment.t) : Assignment.t :=
+  match count, trail with
+  | S count', entry :: trail' =>
+      assignment_remove_entries count' trail'
+        (Assignment.remove (literal_var (trail_literal entry)) assignment)
+  | _, _ => assignment
+  end.
 
-Fixpoint scan_clause_once (m : Model) (c : Clause) : bool * list Literal :=
+Definition assignment_after_backtrack (old retained : Trail)
+    (assignment : Assignment.t) : Assignment.t :=
+  assignment_remove_entries (length old - length retained) old assignment.
+
+Definition literal_is_true (assignment : Assignment.t) (l : Literal) : bool :=
+  match literal_value assignment l with
+  | Some true => true
+  | _ => false
+  end.
+
+Definition literal_is_undecided (assignment : Assignment.t) (l : Literal)
+    : bool :=
+  match literal_value assignment l with
+  | None => true
+  | _ => false
+  end.
+
+Definition literal_is_decided (assignment : Assignment.t) (l : Literal) : Prop :=
+  literal_is_undecided assignment l = false.
+
+Fixpoint scan_clause_once (assignment : Assignment.t) (c : Clause)
+    : bool * list Literal :=
   match c with
   | [] => (false, [])
   | l :: c' =>
-      let '(satisfied, undecided) := scan_clause_once m c' in
-      (orb (literal_is_true m l) satisfied,
-       if literal_is_undecided m l then l :: undecided else undecided)
+      let '(satisfied, undecided) := scan_clause_once assignment c' in
+      (orb (literal_is_true assignment l) satisfied,
+       if literal_is_undecided assignment l
+       then l :: undecided else undecided)
   end.
 
 Variant scan_result :=
@@ -933,10 +969,10 @@ Definition restore_detached_watch (falsified_watch : Literal)
    already decided, put that watch back so a non-unit clause retains two
    watches.  A physical unit clause deliberately loses its sole watch after
    its root-level propagation. *)
-Definition scan_clause (m : Model) (falsified_watch : Literal)
+Definition scan_clause (assignment : Assignment.t) (falsified_watch : Literal)
     (ci : ClausePointer) (c : Clause)
     (cm : ClauseMap.t) : scan_result :=
-  let '(satisfied, undecided) := scan_clause_once m c in
+  let '(satisfied, undecided) := scan_clause_once assignment c in
   if satisfied then
       clause_decided (restore_detached_watch falsified_watch ci c cm)
   else
@@ -966,30 +1002,38 @@ Definition propagate (falsified_watch : Literal) (ci : ClausePointer)
   match find_clause ci s with
   | None => Progress s
   | Some c =>
-    match scan_clause s.(state_trail) falsified_watch ci c s.(state_watched) with
+    match scan_clause s.(state_assignment) falsified_watch ci c
+        s.(state_watched) with
     | propagate_literal l cm =>
       Progress
         {| state_trail := s.(state_trail);
+           state_assignment := s.(state_assignment);
            state_clauses := s.(state_clauses);
            state_learned := s.(state_learned);
            state_watched := cm;
            state_pending := (l, ci) :: s.(state_pending) |}
     | clause_conflict cm =>
       Conflict
-        {| state_trail := s.(state_trail); state_clauses := s.(state_clauses);
+        {| state_trail := s.(state_trail);
+           state_assignment := s.(state_assignment);
+           state_clauses := s.(state_clauses);
            state_learned := s.(state_learned);
            state_watched := cm;
            state_pending := s.(state_pending) |}
         c
     | clause_decided cm =>
       Progress
-        {| state_trail := s.(state_trail); state_clauses := s.(state_clauses);
+        {| state_trail := s.(state_trail);
+           state_assignment := s.(state_assignment);
+           state_clauses := s.(state_clauses);
            state_learned := s.(state_learned);
            state_watched := cm;
            state_pending := s.(state_pending) |}
     | clause_watched cm =>
       Progress
-        {| state_trail := s.(state_trail); state_clauses := s.(state_clauses);
+        {| state_trail := s.(state_trail);
+           state_assignment := s.(state_assignment);
+           state_clauses := s.(state_clauses);
            state_learned := s.(state_learned);
            state_watched := cm;
            state_pending := s.(state_pending) |}
@@ -1020,6 +1064,7 @@ Definition set_trail_entry (entry : TrailEntry) (s : State) : progress_result :=
   let falsified_watch := opposite_literal l in
   let cm := ClauseMap.clear_falsified l s.(state_watched) in
   let s' := {| state_trail := entry :: s.(state_trail);
+      state_assignment := assignment_set_literal l s.(state_assignment);
       state_clauses := s.(state_clauses); state_watched := cm;
       state_learned := s.(state_learned);
       state_pending := s.(state_pending) |} in
@@ -1032,11 +1077,13 @@ Definition set_propagated_lit (l : Literal) (cause : ClausePointer) (s : State)
     : progress_result :=
   set_trail_entry (Propagation l cause) s.
 
-Fixpoint find_undecided_var (m : Model) (vs : list Var) : option Var :=
+Fixpoint find_undecided_var (assignment : Assignment.t) (vs : list Var)
+    : option Var :=
   match vs with
   | [] => None
   | v :: vs' =>
-      if var_is_assigned m v then find_undecided_var m vs' else Some v
+      if var_is_assigned assignment v
+      then find_undecided_var assignment vs' else Some v
   end.
 
 Definition clause_store_vars (store : ClauseStore.t) : list Var :=
@@ -1063,16 +1110,17 @@ Definition progress_state (s : State) : progress_result :=
   | (l, c) :: pending =>
       let base :=
         {| state_trail := s.(state_trail);
+           state_assignment := s.(state_assignment);
            state_clauses := s.(state_clauses);
            state_learned := s.(state_learned);
            state_watched := s.(state_watched);
            state_pending := pending |} in
-      match literal_value s.(state_trail) l with
+      match literal_value s.(state_assignment) l with
       | Some _ => Progress base
       | None => set_propagated_lit l c base
       end
   | [] =>
-      match find_undecided_var s.(state_trail)
+      match find_undecided_var s.(state_assignment)
           (problem_vars s) with
       | None => Progress s (* All the literal have been decided so no progress can be made *)
       | Some v =>
@@ -1239,9 +1287,10 @@ Definition find_recent_different_clause_literal (v : Var)
     (m : Model) (c : Clause) : option Literal :=
   find_recent_clause_literal_except (Some v) m c.
 
-Definition install_watches (m : Model) (ci : ClausePointer)
+Definition install_watches (m : Model) (assignment : Assignment.t)
+    (ci : ClausePointer)
     (c : Clause) (cm : ClauseMap.t) : ClauseMap.t :=
-  let undecided := snd (scan_clause_once m c) in
+  let undecided := snd (scan_clause_once assignment c) in
   match undecided with
   | l :: undecided' =>
       match find_different_var (literal_var l) undecided' with
@@ -1265,13 +1314,15 @@ Definition install_watches (m : Model) (ci : ClausePointer)
 
 Definition index_clause (pointer : ClausePointer) (s : State) (c : Clause)
     : progress_result :=
-  let '(satisfied, undecided) := scan_clause_once s.(state_trail) c in
+  let '(satisfied, undecided) := scan_clause_once s.(state_assignment) c in
   if clause_has_opposite_literals c then Progress s
   else
-    let cm := install_watches s.(state_trail) pointer c s.(state_watched) in
+    let cm := install_watches s.(state_trail) s.(state_assignment) pointer c
+      s.(state_watched) in
     if satisfied then
       Progress
         {| state_trail := s.(state_trail);
+           state_assignment := s.(state_assignment);
            state_clauses := s.(state_clauses);
            state_learned := s.(state_learned);
            state_watched := cm;
@@ -1281,6 +1332,7 @@ Definition index_clause (pointer : ClausePointer) (s : State) (c : Clause)
       | [] =>
           Conflict
             {| state_trail := s.(state_trail);
+               state_assignment := s.(state_assignment);
                state_clauses := s.(state_clauses);
                state_learned := s.(state_learned);
                state_watched := cm;
@@ -1291,6 +1343,7 @@ Definition index_clause (pointer : ClausePointer) (s : State) (c : Clause)
           | None =>
               Progress
                 {| state_trail := s.(state_trail);
+                   state_assignment := s.(state_assignment);
                    state_clauses := s.(state_clauses);
                    state_learned := s.(state_learned);
                    state_watched := cm;
@@ -1298,6 +1351,7 @@ Definition index_clause (pointer : ClausePointer) (s : State) (c : Clause)
           | Some _ =>
               Progress
                 {| state_trail := s.(state_trail);
+                   state_assignment := s.(state_assignment);
                    state_clauses := s.(state_clauses);
                    state_learned := s.(state_learned);
                    state_watched := cm;
@@ -1319,6 +1373,7 @@ Definition add_clause_to (destination : clause_destination)
     end in
   let base :=
     {| state_trail := s.(state_trail);
+       state_assignment := s.(state_assignment);
        state_clauses :=
          match destination with
          | OriginalClause => ClauseStore.add ci c s.(state_clauses)
@@ -1345,18 +1400,18 @@ Definition clause_pointers (s : State) : list ClausePointer :=
 
 (* Rebuild only the unit-propagation queue after backtracking.  Removing trail
    entries cannot falsify a clause, so there is no conflict queue to rebuild. *)
-Fixpoint reclassify_clauses (m : Model) (s : State)
+Fixpoint reclassify_clauses (assignment : Assignment.t) (s : State)
     (clauses : list ClausePointer) : Pending :=
   match clauses with
   | [] => []
   | ci :: clauses' =>
-      let pending := reclassify_clauses m s clauses' in
+      let pending := reclassify_clauses assignment s clauses' in
       match find_clause ci s with
       | None => pending
       | Some c =>
           if clause_has_opposite_literals c then pending
           else
-          let '(satisfied, undecided) := scan_clause_once m c in
+          let '(satisfied, undecided) := scan_clause_once assignment c in
           if satisfied then pending
           else
             match undecided with
@@ -1373,8 +1428,9 @@ Fixpoint reclassify_clauses (m : Model) (s : State)
 Definition pending_clause_pointers (pending : Pending) : list ClausePointer :=
   map snd pending.
 
-Definition reclassify_state (m : Model) (s : State) : Pending :=
-  reclassify_clauses m s (pending_clause_pointers s.(state_pending)).
+Definition reclassify_state (assignment : Assignment.t) (s : State) : Pending :=
+  reclassify_clauses assignment s
+    (pending_clause_pointers s.(state_pending)).
 
 Definition backtrack (conflict : State * Clause) : option progress_result :=
   let conflict := count_conflict conflict in
@@ -1383,15 +1439,18 @@ Definition backtrack (conflict : State * Clause) : option progress_result :=
   | None => None
   | Some learned =>
       let trail := backtrack_trail learned s.(state_trail) in
-      let pending := reclassify_state (trail_model trail) s in
+      let assignment := assignment_after_backtrack s.(state_trail) trail
+        s.(state_assignment) in
+      let pending := reclassify_state assignment s in
       let backtracked :=
         {| state_trail := trail;
+           state_assignment := assignment;
            state_clauses := s.(state_clauses);
            state_learned := s.(state_learned);
            state_watched := s.(state_watched);
            state_pending := pending |} in
       match trail_has_decision trail,
-          scan_clause_once (trail_model trail) learned with
+          scan_clause_once assignment learned with
       | false, (false, []) => None
       | _, _ => Some (add_learned backtracked learned)
       end
@@ -1400,7 +1459,7 @@ Definition backtrack (conflict : State * Clause) : option progress_result :=
 Definition progress (s : State) : progress_result :=
   match s.(state_pending) with
   | (l, c) :: _ =>
-      match literal_value s.(state_trail) l with
+      match literal_value s.(state_assignment) l with
       | Some false =>
           match find_clause c s with
           | Some clause => Conflict s clause
@@ -1421,7 +1480,7 @@ Definition rush_has_work (s : State) : bool :=
   match s.(state_pending) with
   | _ :: _ => true
   | [] =>
-      match find_undecided_var s.(state_trail)
+      match find_undecided_var s.(state_assignment)
           (problem_vars s) with
       | Some _ => true
       | None => false
